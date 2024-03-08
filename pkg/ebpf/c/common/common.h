@@ -19,6 +19,11 @@ statfunc const char *get_device_name(struct device *dev)
     return kobj.name;
 }
 
+// create dev_t struct from gendisk struct
+static dev_t get_device_from_disk(struct gendisk *disk) {
+    return (BPF_CORE_READ(disk, major)  << 20) | BPF_CORE_READ(disk, first_minor);
+}
+
 // Workaround: Newer LLVM versions might fail to optimize has_prefix()
 // loop unrolling with the following error:
 //

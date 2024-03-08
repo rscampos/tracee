@@ -48,6 +48,7 @@ const (
 	VfsReadv
 	MemProtAlert
 	CommitCreds
+	BlockDevLatency
 	SwitchTaskNS
 	MagicWrite
 	CgroupAttachTask
@@ -11366,6 +11367,22 @@ var CoreEvents = map[ID]Definition{
 		params: []trace.ArgMeta{
 			{Type: "slim_cred_t", Name: "old_cred"},
 			{Type: "slim_cred_t", Name: "new_cred"},
+		},
+	},
+	BlockDevLatency: {
+		id:      BlockDevLatency,
+		id32Bit: Sys32Undefined,
+		name:    "block_device_avg_latency",
+		version: NewVersion(1, 0, 0),
+		dependencies: Dependencies{
+			probes: []Probe{
+				{handle: probes.BlockDevStart, required: true},
+				{handle: probes.BlockDevDone, required: true},
+			},
+		},
+		sets: []string{},
+		params: []trace.ArgMeta{
+			{Type: "u64", Name: "average_time"},
 		},
 	},
 	SwitchTaskNS: {

@@ -165,6 +165,8 @@ func NewDefaultProbeGroup(module *bpf.Module, netEnabled bool, kSyms *helpers.Ke
 		ProcCreate:                 NewTraceProbe(KProbe, "proc_create", "trace_proc_create"),
 		SecurityFileMProtect:       NewTraceProbe(KProbe, "security_file_mprotect", "trace_security_file_mprotect"),
 		CommitCreds:                NewTraceProbe(KProbe, "commit_creds", "trace_commit_creds"),
+		BlockDevStart:              NewTraceProbe(KProbe, "blk_account_io_start", "trace_blk_account_io_start"),
+		BlockDevDone:               NewTraceProbe(KProbe, "blk_account_io_done", "trace_blk_account_io_done"),
 		SwitchTaskNS:               NewTraceProbe(KProbe, "switch_task_namespaces", "trace_switch_task_namespaces"),
 		RegisterKprobe:             NewTraceProbe(KProbe, "register_kprobe", "trace_register_kprobe"),
 		RegisterKprobeRet:          NewTraceProbe(KretProbe, "register_kprobe", "trace_ret_register_kprobe"),

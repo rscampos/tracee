@@ -1112,6 +1112,71 @@ struct bpf_insn {
 const int TRACE_EVENT_FL_TRACEPOINT_BIT = 4;
 const int TRACE_EVENT_FL_TRACEPOINT = (1 << TRACE_EVENT_FL_TRACEPOINT_BIT);
 
+enum req_opf {
+	REQ_OP_WRITE = 1,
+};
+
+typedef __u32 req_flags_t;
+typedef u64 sector_t;
+
+struct llist_node {
+	struct llist_node *next;
+};
+
+struct bio_vec {
+	struct page *bv_page;
+	unsigned int bv_len;
+	unsigned int bv_offset;
+};
+
+typedef u8 blk_status_t;
+
+struct request;
+
+typedef void rq_end_io_fn(struct request *, blk_status_t);
+
+struct request {
+	struct request_queue *q;
+	struct blk_mq_ctx *mq_ctx;
+	struct blk_mq_hw_ctx *mq_hctx;
+	unsigned int cmd_flags;
+	req_flags_t rq_flags;
+	int tag;
+	int internal_tag;
+	unsigned int __data_len;
+	sector_t __sector;
+	struct bio *bio;
+	struct bio *biotail;
+	struct list_head queuelist;
+	union {
+		struct hlist_node hash;
+		struct llist_node ipi_list;
+	};
+	union {
+		struct rb_node rb_node;
+		struct bio_vec special_vec;
+		void *completion_data;
+		int error_count;
+	};
+	union {
+		struct {
+			struct io_cq *icq;
+			void *priv[2];
+		} elv;
+		struct {
+			unsigned int seq;
+			struct list_head list;
+			rq_end_io_fn *saved_end_io;
+		} flush;
+	};
+	struct gendisk *rq_disk;
+};
+
+struct gendisk {
+	int major;
+	int first_minor;
+};
+
 //
 // COMPLETE NETWORK TYPES
 //

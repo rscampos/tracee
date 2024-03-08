@@ -2319,6 +2319,141 @@ int BPF_KPROBE(trace_commit_creds)
     return 0;
 }
 
+// Probe for block I/O start
+// Store the start time of the request based on block device request.
+SEC("kprobe/blk_account_io_start")
+int BPF_KPROBE(trace_blk_account_io_start) {
+    program_data_t p = {};
+    if (!init_program_data(&p, ctx))
+        return 0;
+
+    if (!should_trace(&p))
+        return 0;
+
+    if (!should_submit(BLOCK_DEV_LATENCY, p.event))
+        return 0;
+
+    struct request *req = (struct request *) PT_REGS_PARM1(ctx);
+    u32 req_flags = BPF_CORE_READ(req, cmd_flags);
+
+    // Consider only write operations
+    if ((req_flags & REQ_OP_MASK) != REQ_OP_WRITE) {
+        return 0;
+    }
+
+    // hash key creation based on block device and sector
+    struct gendisk *disk = BPF_CORE_READ(req, rq_disk);
+    struct hash_key key = {
+        .dev = get_device_from_disk(disk),
+        .sector = BPF_CORE_READ(req, __sector)
+    };
+
+    // get the current time after eBPF overhead
+    u64 val = bpf_ktime_get_ns();
+
+    // update the map with the start time of the request
+    bpf_map_update_elem(&blk_dev_ts_start_map, &key, &val, BPF_ANY);
+
+    return 0;
+}
+
+// Probe for block I/O done
+// Calculate the time difference (delta) between the start and
+// end of a block I/O request. It measures the duration taken by the
+// kernel to complete a file write operation to a block device.
+// Sampling continues until a specified threshold is reached, after 
+// which the average time is calculated and submitted to user-space.
+SEC("kprobe/blk_account_io_done")
+int BPF_KPROBE(trace_blk_account_io_done) {
+    u32 *tcc; // threshold current counter
+    u32 zero = 0; // index
+    u64 *ts_start; // initial time of the request
+    u32 threshold = 50; // threshold for counter
+    bool first_measure = false;
+
+    program_data_t p = {};
+    if (!init_program_data(&p, ctx))
+        return 0;
+
+    if (!should_trace(&p))
+        return 0;
+
+    if (!should_submit(BLOCK_DEV_LATENCY, p.event))
+        return 0;
+
+    struct request *req = (struct request *) PT_REGS_PARM1(ctx);
+    u32 req_flags = BPF_CORE_READ(req, cmd_flags);
+
+    // Consider only write operations
+    if ((req_flags & REQ_OP_MASK) != REQ_OP_WRITE) {
+        return 0;
+    }
+
+    // hash key creation based on block device and sector
+    struct gendisk *disk = BPF_CORE_READ(req, rq_disk);
+    struct hash_key key = {
+        .dev = get_device_from_disk(disk),
+        .sector = BPF_CORE_READ(req, __sector)
+    };
+
+    // Lookup the start time of the request (if exists)
+    ts_start = bpf_map_lookup_elem(&blk_dev_ts_start_map, &key);
+    if (unlikely(!ts_start))
+        return 0;
+
+    // The start time of request is not needed anymore
+    bpf_map_delete_elem(&blk_dev_ts_start_map, &key);
+
+    // Lookup the current value of the threshold count
+    tcc = bpf_map_lookup_elem(&blk_dev_threshold_count_map, &zero);
+    if (unlikely(!tcc))
+        return 0;
+
+    if (*tcc == threshold) { // threshold reached
+        // Calculate the average time in this block
+        // Divide the total sum of the average by the threshold
+        u64 *total_avg = bpf_map_lookup_elem(&blk_dev_ts_average_map, &zero);
+        if (unlikely(!total_avg))
+            return 0;
+
+        u64 average = *total_avg / threshold;
+        save_to_submit_buf(&p.event->args_buf, &average, sizeof(u64), 0);
+        events_perf_submit(&p, BLOCK_DEV_LATENCY, 0);
+
+        // Reset the counter for next measure
+        u32 initial_value = 1;
+        first_measure = true;
+        bpf_map_update_elem(&blk_dev_threshold_count_map, &zero, &initial_value, BPF_ANY);
+    } else {
+        // Increment the threshold counter
+        if (*tcc == 0)
+            first_measure = true;
+        __sync_fetch_and_add(tcc, 1);
+    }
+
+    // Calculate the delta between the start and end of the request
+    u64 cur_time = bpf_ktime_get_ns();
+    u64 delta = cur_time - *ts_start;
+
+    // Update the average time
+    if (likely(!first_measure)) {
+        // get the current total sum of the average
+        u64 *avg_total = bpf_map_lookup_elem(&blk_dev_ts_average_map, &zero);
+        if (unlikely(!avg_total))
+            return 0;
+
+        // given the small magnitude of the deltas and the presence of a 
+        // hardcoded threshold, it's safe to assume that this holder 
+        // won't wraparound
+        __sync_fetch_and_add(avg_total, delta);
+    } else {
+        // overwrite delta as the first average
+        bpf_map_update_elem(&blk_dev_ts_average_map, &zero, &delta, BPF_ANY);
+    }
+
+    return 0;
+}
+
 SEC("kprobe/switch_task_namespaces")
 int BPF_KPROBE(trace_switch_task_namespaces)
 {

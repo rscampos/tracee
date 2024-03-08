@@ -51,6 +51,8 @@ const (
 	SecurityMmapFile
 	SecurityFileMProtect
 	CommitCreds
+	BlockDevStart
+	BlockDevDone
 	SwitchTaskNS
 	CgroupAttachTask
 	CgroupMkdir

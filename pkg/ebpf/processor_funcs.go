@@ -479,3 +479,15 @@ func (t *Tracee) processSharedObjectLoaded(event *trace.Event) error {
 
 	return nil
 }
+
+// processBlockDevLatency reset process related fields for the event
+// block_device_avg_latency
+func (t *Tracee) processBlockDevLatency(event *trace.Event) error {
+	// Reset some process related info for this event
+	event.ProcessID = 0
+	event.UserID = 0
+	event.ThreadID = 0
+	event.ProcessName = ""
+
+	return nil
+}

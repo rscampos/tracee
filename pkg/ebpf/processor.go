@@ -122,6 +122,7 @@ func (t *Tracee) registerEventProcessors() {
 	t.RegisterEventProcessor(events.PrintMemDump, t.processTriggeredEvent)
 	t.RegisterEventProcessor(events.PrintMemDump, t.processPrintMemDump)
 	t.RegisterEventProcessor(events.SharedObjectLoaded, t.processSharedObjectLoaded)
+	t.RegisterEventProcessor(events.BlockDevLatency, t.processBlockDevLatency)
 
 	//
 	// Event Timestamps Normalization Processors

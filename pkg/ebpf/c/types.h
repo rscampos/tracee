@@ -67,6 +67,7 @@ enum event_id_e
     VFS_READV,
     MEM_PROT_ALERT,
     COMMIT_CREDS,
+    BLOCK_DEV_LATENCY,
     SWITCH_TASK_NS,
     MAGIC_WRITE,
     CGROUP_ATTACH_TASK,
@@ -543,5 +544,16 @@ enum file_modification_op
 
 typedef __u64 stack_trace_t[MAX_STACK_DEPTH];
 typedef u32 file_type_t;
+
+// use to discover if is a write operation
+#define REQ_OP_BITS	8
+#define REQ_OP_MASK	((1 << REQ_OP_BITS) - 1)
+
+// key to identify the block dev request
+struct hash_key {
+    dev_t dev;
+    u32 _pad;
+    sector_t sector;
+};
 
 #endif

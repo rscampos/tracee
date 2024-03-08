@@ -636,4 +636,28 @@ struct signals {
 
 typedef struct signals signals_t;
 
+// hold count for threshold
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, u32);
+} blk_dev_threshold_count_map SEC(".maps");
+
+// hold average time of measurements
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, u64);
+} blk_dev_ts_average_map SEC(".maps");
+
+// hold start time of the request
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, struct hash_key);
+    __type(value, u64);
+    __uint(max_entries, 8192);
+} blk_dev_ts_start_map SEC(".maps");
+
 #endif /* __MAPS_H__ */
