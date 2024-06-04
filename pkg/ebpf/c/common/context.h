@@ -45,9 +45,9 @@ statfunc int init_task_context(task_context_t *tsk_ctx, struct task_struct *task
     // User Info
     tsk_ctx->uid = bpf_get_current_uid_gid();
     // Times
-    tsk_ctx->start_time = get_task_start_time(task);
-    tsk_ctx->leader_start_time = get_task_start_time(leader);
-    tsk_ctx->parent_start_time = get_task_start_time(up_parent);
+    tsk_ctx->start_time = get_task_start_time2(task);
+    tsk_ctx->leader_start_time = get_task_start_time2(leader);
+    tsk_ctx->parent_start_time = get_task_start_time2(up_parent);
 
     if (is_compat(task))
         tsk_ctx->flags |= IS_COMPAT_FLAG;
