@@ -1409,6 +1409,7 @@ func (t *Tracee) initBPF() error {
 		t.containers,
 		t.config.NoContainersEnrich,
 		t.processTree,
+		t.timeNormalizer,
 	)
 	if err != nil {
 		return errfmt.WrapError(err)
