@@ -68,13 +68,14 @@ func parseMemProtAlert(arg *trace.Argument, alert uint32) {
 }
 
 func parseSyscall(arg *trace.Argument, id int32) {
-	if Core.IsDefined(ID(id)) {
-		eventDefinition := Core.GetDefinitionByID(ID(id))
-		if eventDefinition.IsSyscall() {
-			arg.Value = eventDefinition.GetName()
-			arg.Type = "string"
-		}
+	// bypass the lock contention accessing the read-only map directly
+	def, ok := CoreEvents[ID(id)]
+	if !ok || !def.IsSyscall() {
+		return
 	}
+
+	arg.Type = "string"
+	arg.Value = def.GetName()
 }
 
 func parsePtraceRequestArgument(arg *trace.Argument, req uint64) {
