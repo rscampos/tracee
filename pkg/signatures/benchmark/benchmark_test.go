@@ -3,11 +3,13 @@ package benchmark
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/aquasecurity/tracee/pkg/events"
 	"github.com/aquasecurity/tracee/pkg/signatures/benchmark/signature/golang"
 	"github.com/aquasecurity/tracee/pkg/signatures/benchmark/signature/rego"
 	"github.com/aquasecurity/tracee/pkg/signatures/engine"
@@ -217,6 +219,66 @@ func BenchmarkEngineWithNSignatures(b *testing.B) {
 	}
 }
 
+func BenchmarkEngineMultipleMethodsGetMetadata(b *testing.B) {
+	benches := []struct {
+		name     string
+		sigFuncs []func() (detect.Signature, error)
+		Enabled  bool
+	}{
+		{
+			name:     "Performance sig GetMetadata() - current method",
+			sigFuncs: []func() (detect.Signature, error){golang.NewperformanceCurrent},
+		},
+		{
+			name:     "Performance sig GetMetadata() - method 1 (sync.once)",
+			sigFuncs: []func() (detect.Signature, error){golang.NewperformanceMethod1},
+		},
+		{
+			name:     "Performance sig GetMetadata() - method 2 (statically)",
+			sigFuncs: []func() (detect.Signature, error){golang.NewperformanceMethod2},
+		},
+	}
+
+	for _, bc := range benches {
+		b.Run(bc.name, func(b *testing.B) {
+			var sigs []detect.Signature
+			for _, sig := range bc.sigFuncs {
+				s, _ := sig()
+				sigs = append(sigs, s)
+			}
+
+			for i := 0; i < b.N; i++ {
+				// Produce events without timing it
+				b.StopTimer()
+				inputs := ProduceEventsInMemory(inputEventsCount)
+				output := make(chan *detect.Finding, inputEventsCount*len(sigs))
+
+				config := engine.Config{
+					Signatures:          sigs,
+					Enabled:             true,
+					SigNameToEventID:    allocateEventIdsForSigs(events.StartSignatureID, sigs),
+					ShouldDispatchEvent: func(int32) bool { return true },
+				}
+
+				e, err := engine.NewEngine(config, inputs, output)
+				require.NoError(b, err, "constructing engine")
+
+				err = e.Init()
+				require.NoError(b, err, "initializing engine")
+				b.StartTimer()
+
+				// Start signatures engine and wait until all events are processed
+				e.Start(waitForEventsProcessed(inputs.Tracee))
+
+				b.StopTimer()
+
+				// Set engine to nil to help with garbage collection
+				e = nil
+				runtime.GC()
+			}
+		})
+	}
+}
 func waitForEventsProcessed(eventsCh chan protocol.Event) context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

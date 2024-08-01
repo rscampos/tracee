@@ -3,11 +3,18 @@ package benchmark
 import (
 	_ "embed"
 	"math/rand"
+	"regexp"
 
+	"github.com/aquasecurity/tracee/pkg/events"
+	"github.com/aquasecurity/tracee/pkg/logger"
 	"github.com/aquasecurity/tracee/pkg/signatures/engine"
+	"github.com/aquasecurity/tracee/types/detect"
 	"github.com/aquasecurity/tracee/types/protocol"
 	"github.com/aquasecurity/tracee/types/trace"
 )
+
+// processMemFileRegexp is used by some signatures
+var processMemFileRegexp = regexp.MustCompile(`^/proc/(?:\d+|self)/mem$`)
 
 var (
 	innocentEvent = trace.Event{
@@ -170,4 +177,21 @@ func ProduceEventsInMemoryRandom(n int, seed ...trace.Event) engine.EventSources
 	return engine.EventSources{
 		Tracee: eventsCh,
 	}
+}
+
+func allocateEventIdsForSigs(startId events.ID, sigs []detect.Signature) map[string]int32 {
+	namesToIds := make(map[string]int32)
+	newEventDefID := startId
+	// First allocate event IDs to all signatures
+	for _, s := range sigs {
+		m, err := s.GetMetadata()
+		if err != nil {
+			logger.Warnw("Failed to allocate id for signature", "error", err)
+			continue
+		}
+
+		namesToIds[m.EventName] = int32(newEventDefID)
+		newEventDefID++
+	}
+	return namesToIds
 }
