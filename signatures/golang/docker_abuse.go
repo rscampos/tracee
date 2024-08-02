@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/aquasecurity/tracee/signatures/helpers"
 	"github.com/aquasecurity/tracee/types/detect"
@@ -13,6 +14,8 @@ import (
 type DockerAbuse struct {
 	cb         detect.SignatureHandler
 	dockerSock string
+	metadata   detect.SignatureMetadata
+	once       sync.Once
 }
 
 func (sig *DockerAbuse) Init(ctx detect.SignatureContext) error {
@@ -22,21 +25,24 @@ func (sig *DockerAbuse) Init(ctx detect.SignatureContext) error {
 }
 
 func (sig *DockerAbuse) GetMetadata() (detect.SignatureMetadata, error) {
-	return detect.SignatureMetadata{
-		ID:          "TRC-1019",
-		Version:     "1",
-		Name:        "Docker socket abuse detected",
-		EventName:   "docker_abuse",
-		Description: "An attempt to abuse the Docker UNIX socket inside a container was detected. docker.sock is the UNIX socket that Docker uses as the entry point to the Docker API. Adversaries may attempt to abuse this socket to compromise the system.",
-		Properties: map[string]interface{}{
-			"Severity":             2,
-			"Category":             "privilege-escalation",
-			"Technique":            "Exploitation for Privilege Escalation",
-			"Kubernetes_Technique": "",
-			"id":                   "attack-pattern--b21c3b2d-02e6-45b1-980b-e69051040839",
-			"external_id":          "T1068",
-		},
-	}, nil
+	sig.once.Do(func() {
+		sig.metadata = detect.SignatureMetadata{
+			ID:          "TRC-1019",
+			Version:     "1",
+			Name:        "Docker socket abuse detected",
+			EventName:   "docker_abuse",
+			Description: "An attempt to abuse the Docker UNIX socket inside a container was detected. docker.sock is the UNIX socket that Docker uses as the entry point to the Docker API. Adversaries may attempt to abuse this socket to compromise the system.",
+			Properties: map[string]interface{}{
+				"Severity":             2,
+				"Category":             "privilege-escalation",
+				"Technique":            "Exploitation for Privilege Escalation",
+				"Kubernetes_Technique": "",
+				"id":                   "attack-pattern--b21c3b2d-02e6-45b1-980b-e69051040839",
+				"external_id":          "T1068",
+			},
+		}
+	})
+	return sig.metadata, nil
 }
 
 func (sig *DockerAbuse) GetSelectedEvents() ([]detect.SignatureEventSelector, error) {

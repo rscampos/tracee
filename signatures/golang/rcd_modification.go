@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"sync"
 
 	"github.com/aquasecurity/tracee/signatures/helpers"
 	"github.com/aquasecurity/tracee/types/detect"
@@ -16,6 +17,8 @@ type RcdModification struct {
 	rcdFiles   []string
 	rcdDirs    []string
 	rcdCommand string
+	metadata   detect.SignatureMetadata
+	once       sync.Once
 }
 
 func (sig *RcdModification) Init(ctx detect.SignatureContext) error {
@@ -27,21 +30,24 @@ func (sig *RcdModification) Init(ctx detect.SignatureContext) error {
 }
 
 func (sig *RcdModification) GetMetadata() (detect.SignatureMetadata, error) {
-	return detect.SignatureMetadata{
-		ID:          "TRC-1026",
-		Version:     "1",
-		Name:        "Rcd modification detected",
-		EventName:   "rcd_modification",
-		Description: "The rcd files were modified. rcd files are scripts executed on boot and runlevel switch. Those scripts are responsible for service control in runlevel switch. Adversaries may add or modify rcd files in order to persist a reboot, thus maintaining malicious execution on the affected host.",
-		Properties: map[string]interface{}{
-			"Severity":             2,
-			"Category":             "persistence",
-			"Technique":            "RC Scripts",
-			"Kubernetes_Technique": "",
-			"id":                   "attack-pattern--dca670cf-eeec-438f-8185-fd959d9ef211",
-			"external_id":          "T1037.004",
-		},
-	}, nil
+	sig.once.Do(func() {
+		sig.metadata = detect.SignatureMetadata{
+			ID:          "TRC-1026",
+			Version:     "1",
+			Name:        "Rcd modification detected",
+			EventName:   "rcd_modification",
+			Description: "The rcd files were modified. rcd files are scripts executed on boot and runlevel switch. Those scripts are responsible for service control in runlevel switch. Adversaries may add or modify rcd files in order to persist a reboot, thus maintaining malicious execution on the affected host.",
+			Properties: map[string]interface{}{
+				"Severity":             2,
+				"Category":             "persistence",
+				"Technique":            "RC Scripts",
+				"Kubernetes_Technique": "",
+				"id":                   "attack-pattern--dca670cf-eeec-438f-8185-fd959d9ef211",
+				"external_id":          "T1037.004",
+			},
+		}
+	})
+	return sig.metadata, nil
 }
 
 func (sig *RcdModification) GetSelectedEvents() ([]detect.SignatureEventSelector, error) {

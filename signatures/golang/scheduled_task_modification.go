@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"sync"
 
 	"github.com/aquasecurity/tracee/signatures/helpers"
 	"github.com/aquasecurity/tracee/types/detect"
@@ -16,6 +17,8 @@ type ScheduledTaskModification struct {
 	cronFiles    []string
 	cronDirs     []string
 	cronCommands []string
+	metadata     detect.SignatureMetadata
+	once         sync.Once
 }
 
 func (sig *ScheduledTaskModification) Init(ctx detect.SignatureContext) error {
@@ -27,21 +30,24 @@ func (sig *ScheduledTaskModification) Init(ctx detect.SignatureContext) error {
 }
 
 func (sig *ScheduledTaskModification) GetMetadata() (detect.SignatureMetadata, error) {
-	return detect.SignatureMetadata{
-		ID:          "TRC-1027",
-		Version:     "1",
-		Name:        "Scheduled tasks modification detected",
-		EventName:   "scheduled_task_mod",
-		Description: "The task scheduling functionality or files were modified. Crontab schedules task execution or enables task execution at boot time. Adversaries may add or modify scheduled tasks in order to persist a reboot, thus maintaining malicious execution on the affected host.",
-		Properties: map[string]interface{}{
-			"Severity":             2,
-			"Category":             "persistence",
-			"Technique":            "Cron",
-			"Kubernetes_Technique": "",
-			"id":                   "attack-pattern--2acf44aa-542f-4366-b4eb-55ef5747759c",
-			"external_id":          "T1053.003",
-		},
-	}, nil
+	sig.once.Do(func() {
+		sig.metadata = detect.SignatureMetadata{
+			ID:          "TRC-1027",
+			Version:     "1",
+			Name:        "Scheduled tasks modification detected",
+			EventName:   "scheduled_task_mod",
+			Description: "The task scheduling functionality or files were modified. Crontab schedules task execution or enables task execution at boot time. Adversaries may add or modify scheduled tasks in order to persist a reboot, thus maintaining malicious execution on the affected host.",
+			Properties: map[string]interface{}{
+				"Severity":             2,
+				"Category":             "persistence",
+				"Technique":            "Cron",
+				"Kubernetes_Technique": "",
+				"id":                   "attack-pattern--2acf44aa-542f-4366-b4eb-55ef5747759c",
+				"external_id":          "T1053.003",
+			},
+		}
+	})
+	return sig.metadata, nil
 }
 
 func (sig *ScheduledTaskModification) GetSelectedEvents() ([]detect.SignatureEventSelector, error) {

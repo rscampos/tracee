@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/aquasecurity/tracee/signatures/helpers"
 	"github.com/aquasecurity/tracee/types/detect"
@@ -12,6 +13,8 @@ import (
 type SchedDebugRecon struct {
 	cb              detect.SignatureHandler
 	schedDebugPaths []string
+	metadata        detect.SignatureMetadata
+	once            sync.Once
 }
 
 func (sig *SchedDebugRecon) Init(ctx detect.SignatureContext) error {
@@ -21,21 +24,24 @@ func (sig *SchedDebugRecon) Init(ctx detect.SignatureContext) error {
 }
 
 func (sig *SchedDebugRecon) GetMetadata() (detect.SignatureMetadata, error) {
-	return detect.SignatureMetadata{
-		ID:          "TRC-1029",
-		Version:     "1",
-		Name:        "sched_debug CPU file was read",
-		EventName:   "sched_debug_recon",
-		Description: "The sched_debug file was read. This file contains information about your CPU and processes. Adversaries may read this file in order to gather that information for their use.",
-		Properties: map[string]interface{}{
-			"Severity":             1,
-			"Category":             "discovery",
-			"Technique":            "Container and Resource Discovery",
-			"Kubernetes_Technique": "",
-			"id":                   "attack-pattern--0470e792-32f8-46b0-a351-652bc35e9336",
-			"external_id":          "T1613",
-		},
-	}, nil
+	sig.once.Do(func() {
+		sig.metadata = detect.SignatureMetadata{
+			ID:          "TRC-1029",
+			Version:     "1",
+			Name:        "sched_debug CPU file was read",
+			EventName:   "sched_debug_recon",
+			Description: "The sched_debug file was read. This file contains information about your CPU and processes. Adversaries may read this file in order to gather that information for their use.",
+			Properties: map[string]interface{}{
+				"Severity":             1,
+				"Category":             "discovery",
+				"Technique":            "Container and Resource Discovery",
+				"Kubernetes_Technique": "",
+				"id":                   "attack-pattern--0470e792-32f8-46b0-a351-652bc35e9336",
+				"external_id":          "T1613",
+			},
+		}
+	})
+	return sig.metadata, nil
 }
 
 func (sig *SchedDebugRecon) GetSelectedEvents() ([]detect.SignatureEventSelector, error) {

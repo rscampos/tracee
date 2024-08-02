@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"regexp"
+	"sync"
 
 	"github.com/aquasecurity/tracee/signatures/helpers"
 	"github.com/aquasecurity/tracee/types/detect"
@@ -15,6 +16,8 @@ type K8SServiceAccountToken struct {
 	legitProcs       []string
 	tokenPathPattern string
 	compiledRegex    *regexp.Regexp
+	metadata         detect.SignatureMetadata
+	once             sync.Once
 }
 
 func (sig *K8SServiceAccountToken) Init(ctx detect.SignatureContext) error {
@@ -27,21 +30,24 @@ func (sig *K8SServiceAccountToken) Init(ctx detect.SignatureContext) error {
 }
 
 func (sig *K8SServiceAccountToken) GetMetadata() (detect.SignatureMetadata, error) {
-	return detect.SignatureMetadata{
-		ID:          "TRC-108",
-		Version:     "1",
-		Name:        "K8s service account token file read",
-		EventName:   "k8s_service_account_token",
-		Description: "The Kubernetes service account token file was read on your container. This token is used to communicate with the Kubernetes API Server. Adversaries may try to communicate with the API Server to steal information and/or credentials, or even run more containers and laterally extend their grip on the systems.",
-		Properties: map[string]interface{}{
-			"Severity":             0,
-			"Category":             "credential-access",
-			"Technique":            "Exploitation for Credential Access",
-			"Kubernetes_Technique": "Container service account",
-			"id":                   "attack-pattern--9c306d8d-cde7-4b4c-b6e8-d0bb16caca36",
-			"external_id":          "T1212",
-		},
-	}, nil
+	sig.once.Do(func() {
+		sig.metadata = detect.SignatureMetadata{
+			ID:          "TRC-108",
+			Version:     "1",
+			Name:        "K8s service account token file read",
+			EventName:   "k8s_service_account_token",
+			Description: "The Kubernetes service account token file was read on your container. This token is used to communicate with the Kubernetes API Server. Adversaries may try to communicate with the API Server to steal information and/or credentials, or even run more containers and laterally extend their grip on the systems.",
+			Properties: map[string]interface{}{
+				"Severity":             0,
+				"Category":             "credential-access",
+				"Technique":            "Exploitation for Credential Access",
+				"Kubernetes_Technique": "Container service account",
+				"id":                   "attack-pattern--9c306d8d-cde7-4b4c-b6e8-d0bb16caca36",
+				"external_id":          "T1212",
+			},
+		}
+	})
+	return sig.metadata, nil
 }
 
 func (sig *K8SServiceAccountToken) GetSelectedEvents() ([]detect.SignatureEventSelector, error) {

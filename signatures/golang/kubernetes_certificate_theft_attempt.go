@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/aquasecurity/tracee/signatures/helpers"
 	"github.com/aquasecurity/tracee/types/detect"
@@ -14,6 +15,8 @@ type KubernetesCertificateTheftAttempt struct {
 	cb                 detect.SignatureHandler
 	legitProcs         []string
 	k8sCertificatesDir string
+	metadata           detect.SignatureMetadata
+	once               sync.Once
 }
 
 func (sig *KubernetesCertificateTheftAttempt) Init(ctx detect.SignatureContext) error {
@@ -24,21 +27,24 @@ func (sig *KubernetesCertificateTheftAttempt) Init(ctx detect.SignatureContext) 
 }
 
 func (sig *KubernetesCertificateTheftAttempt) GetMetadata() (detect.SignatureMetadata, error) {
-	return detect.SignatureMetadata{
-		ID:          "TRC-1018",
-		Version:     "1",
-		Name:        "K8s TLS certificate theft detected",
-		EventName:   "k8s_cert_theft",
-		Description: "Theft of Kubernetes TLS certificates was detected. TLS certificates are used to establish trust between systems. The Kubernetes certificate is used to to enable secure communication between Kubernetes components, such as kubelet scheduler controller and API Server. An adversary may steal a Kubernetes certificate on a compromised system to impersonate Kubernetes components within the cluster.",
-		Properties: map[string]interface{}{
-			"Severity":             3,
-			"Category":             "credential-access",
-			"Technique":            "Steal Application Access Token",
-			"Kubernetes_Technique": "",
-			"id":                   "attack-pattern--890c9858-598c-401d-a4d5-c67ebcdd703a",
-			"external_id":          "T1528",
-		},
-	}, nil
+	sig.once.Do(func() {
+		sig.metadata = detect.SignatureMetadata{
+			ID:          "TRC-1018",
+			Version:     "1",
+			Name:        "K8s TLS certificate theft detected",
+			EventName:   "k8s_cert_theft",
+			Description: "Theft of Kubernetes TLS certificates was detected. TLS certificates are used to establish trust between systems. The Kubernetes certificate is used to to enable secure communication between Kubernetes components, such as kubelet scheduler controller and API Server. An adversary may steal a Kubernetes certificate on a compromised system to impersonate Kubernetes components within the cluster.",
+			Properties: map[string]interface{}{
+				"Severity":             3,
+				"Category":             "credential-access",
+				"Technique":            "Steal Application Access Token",
+				"Kubernetes_Technique": "",
+				"id":                   "attack-pattern--890c9858-598c-401d-a4d5-c67ebcdd703a",
+				"external_id":          "T1528",
+			},
+		}
+	})
+	return sig.metadata, nil
 }
 
 func (sig *KubernetesCertificateTheftAttempt) GetSelectedEvents() ([]detect.SignatureEventSelector, error) {
