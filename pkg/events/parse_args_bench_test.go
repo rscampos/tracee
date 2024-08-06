@@ -299,6 +299,23 @@ func BenchmarkParseArgs_Uintptr(b *testing.B) {
 	}
 }
 
+func Benchmark_parseSyscallOld(b *testing.B) {
+	for n := 0; n < b.N; n++ {
+		wg := sync.WaitGroup{}
+		wg.Add(10)
+
+		for i := 0; i < 10; i++ {
+			syscallArg := &trace.Argument{ArgMeta: trace.ArgMeta{Name: "syscall"}, Value: int32(0)}
+			go func() {
+				defer wg.Done()
+				parseSyscallOld(syscallArg, 0)
+			}()
+		}
+
+		wg.Wait()
+	}
+}
+
 func Benchmark_parseSyscall(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		wg := sync.WaitGroup{}

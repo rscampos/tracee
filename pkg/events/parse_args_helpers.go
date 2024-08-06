@@ -78,6 +78,16 @@ func parseSyscall(arg *trace.Argument, id int32) {
 	arg.Value = def.GetName()
 }
 
+func parseSyscallOld(arg *trace.Argument, id int32) {
+	if Core.IsDefined(ID(id)) {
+		eventDefinition := Core.GetDefinitionByID(ID(id))
+		if eventDefinition.IsSyscall() {
+			arg.Value = eventDefinition.GetName()
+			arg.Type = "string"
+		}
+	}
+}
+
 func parsePtraceRequestArgument(arg *trace.Argument, req uint64) {
 	arg.Type = "string"
 	ptraceRequestArgument, err := parsers.ParsePtraceRequestArgument(req)
