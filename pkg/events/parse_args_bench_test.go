@@ -1,10 +1,26 @@
 package events
 
 import (
+	"math/rand"
 	"testing"
 
 	"github.com/aquasecurity/tracee/types/trace"
 )
+
+const (
+	inputEventsCount = 1000
+)
+
+func ProduceEventsRandom(n int, seed []*trace.Event) []*trace.Event {
+	allEvents := make([]*trace.Event, n)
+
+	for i := 0; i < n; i++ {
+		s := rand.Intn(len(seed))
+		e := seed[s]
+		allEvents[i] = e
+	}
+	return allEvents
+}
 
 var events = []*trace.Event{
 	{
@@ -268,13 +284,58 @@ var events = []*trace.Event{
 	},
 }
 
-func BenchmarkParseArgs(b *testing.B) {
+func BenchmarkParseArgsWarm(b *testing.B) {
+	// allEvents := ProduceEventsRandom(inputEventsCount, events)
 	for n := 0; n < b.N; n++ {
 		for _, event := range events {
 			err := ParseArgs(event)
 			if err != nil {
 				b.Errorf("Error parsing args: %v", err)
 			}
+		}
+	}
+}
+
+func BenchmarkParseArgsOld(b *testing.B) {
+	// allEvents := ProduceEventsRandom(inputEventsCount, events)
+	for n := 0; n < b.N; n++ {
+		for _, event := range events {
+			// err := ParseArgsOld2(event)
+			err := ParseArgsOld(event)
+			if err != nil {
+				b.Errorf("Error parsing args: %v", err)
+			}
+		}
+	}
+}
+
+func BenchmarkParseArgsNew(b *testing.B) {
+	// allEvents := ProduceEventsRandom(inputEventsCount, events)
+	for n := 0; n < b.N; n++ {
+		for _, event := range events {
+			err := ParseArgs(event)
+			if err != nil {
+				b.Errorf("Error parsing args: %v", err)
+			}
+		}
+	}
+}
+
+func BenchmarkParseArgs_UintptrOld(b *testing.B) {
+	for n := 0; n < b.N; n++ {
+		ptraceEvent := &trace.Event{
+			EventID: int(Ptrace),
+			Args: []trace.Argument{
+				{ArgMeta: trace.ArgMeta{Name: "request"}, Value: int64(0)},
+				{ArgMeta: trace.ArgMeta{Name: "pid"}, Value: int32(0)},
+				{ArgMeta: trace.ArgMeta{Name: "addr"}, Value: ^uintptr(0)},
+				{ArgMeta: trace.ArgMeta{Name: "data"}, Value: ^uintptr(0)},
+			},
+		}
+
+		err := ParseArgsOld2(ptraceEvent)
+		if err != nil {
+			b.Errorf("Error parsing args: %v", err)
 		}
 	}
 }
@@ -291,7 +352,7 @@ func BenchmarkParseArgs_Uintptr(b *testing.B) {
 			},
 		}
 
-		err := ParseArgs(ptraceEvent)
+		err := ParseArgsNew2(ptraceEvent)
 		if err != nil {
 			b.Errorf("Error parsing args: %v", err)
 		}
