@@ -269,7 +269,29 @@ var events = []*trace.Event{
 	},
 }
 
-func BenchmarkParseArgs(b *testing.B) {
+func BenchmarkParseArgsWarm(b *testing.B) {
+	for n := 0; n < b.N; n++ {
+		for _, event := range events {
+			err := ParseArgs(event)
+			if err != nil {
+				b.Errorf("Error parsing args: %v", err)
+			}
+		}
+	}
+}
+
+func BenchmarkParseArgsOld(b *testing.B) {
+	for n := 0; n < b.N; n++ {
+		for _, event := range events {
+			err := ParseArgsOld(event)
+			if err != nil {
+				b.Errorf("Error parsing args: %v", err)
+			}
+		}
+	}
+}
+
+func BenchmarkParseArgsNew(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		for _, event := range events {
 			err := ParseArgs(event)
