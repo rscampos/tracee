@@ -11,9 +11,26 @@ import (
 	"github.com/aquasecurity/tracee/types/trace"
 )
 
+// TODO: better way to define the events
+var inKernelFilterEventIDs = []events.ID{
+	events.SecurityFileOpen,
+	events.MagicWrite,
+	events.SecurityMmapFile,
+}
+
+type MatchTypes struct {
+	exactMatch     bool
+	notExactMatch  bool
+	prefixMatch    bool
+	notPrefixMatch bool
+	suffixMatch    bool
+	notSuffixMatch bool
+}
+
 type DataFilter struct {
-	filters map[events.ID]map[string]Filter[*StringFilter]
-	enabled bool
+	filters       map[events.ID]map[string]Filter[*StringFilter]
+	enabled       bool
+	enabledKernel MatchTypes
 }
 
 // Compile-time check to ensure that DataFilter implements the Cloner interface
@@ -23,6 +40,104 @@ func NewDataFilter() *DataFilter {
 	return &DataFilter{
 		filters: map[events.ID]map[string]Filter[*StringFilter]{},
 		enabled: false,
+		enabledKernel: MatchTypes{
+			exactMatch:     false,
+			notExactMatch:  false,
+			prefixMatch:    false,
+			notPrefixMatch: false,
+			suffixMatch:    false,
+			notSuffixMatch: false,
+		},
+	}
+}
+
+type KernelDataFilter struct {
+	ID     events.ID
+	String string
+}
+
+type DataFilterEqualities struct {
+	Equal          map[KernelDataFilter]struct{}
+	NotEqual       map[KernelDataFilter]struct{}
+	EqualPrefix    map[KernelDataFilter]struct{}
+	NotEqualPrefix map[KernelDataFilter]struct{}
+	EqualSuffix    map[KernelDataFilter]struct{}
+	NotEqualSuffix map[KernelDataFilter]struct{}
+}
+
+func (af *DataFilter) Equalities() DataFilterEqualities {
+	if !af.Enabled() {
+		return DataFilterEqualities{
+			Equal:          map[KernelDataFilter]struct{}{},
+			NotEqual:       map[KernelDataFilter]struct{}{},
+			EqualPrefix:    map[KernelDataFilter]struct{}{},
+			NotEqualPrefix: map[KernelDataFilter]struct{}{},
+			EqualSuffix:    map[KernelDataFilter]struct{}{},
+			NotEqualSuffix: map[KernelDataFilter]struct{}{},
+		}
+	}
+
+	combinedEqualities := make(map[KernelDataFilter]struct{})
+	combinedNotEqualities := make(map[KernelDataFilter]struct{})
+	combinedPrefixEqualities := make(map[KernelDataFilter]struct{})
+	combinedNotPrefixEqualities := make(map[KernelDataFilter]struct{})
+	combinedSuffixEqualities := make(map[KernelDataFilter]struct{})
+	combinedNotSuffixEqualities := make(map[KernelDataFilter]struct{})
+
+	// selected data name
+	dataField := "pathname"
+
+	for _, eventID := range inKernelFilterEventIDs {
+		if filterMap, ok := af.filters[eventID]; ok {
+			if fieldName, ok := filterMap[dataField]; ok {
+				if filter, ok := fieldName.(*StringFilter); ok {
+					// Merge the equalities and not-equalities into the combined maps
+					// Exact match
+					for k := range filter.Equalities().Equal {
+						combinedEqualities[KernelDataFilter{eventID, k}] = struct{}{}
+						af.enabledKernel.exactMatch = true
+					}
+					for k := range filter.Equalities().NotEqual {
+						combinedNotEqualities[KernelDataFilter{eventID, k}] = struct{}{}
+						af.enabledKernel.notExactMatch = true
+						af.enabledKernel.exactMatch = true
+					}
+
+					// Prefix match
+					for k := range filter.Equalities().EqualPrefix {
+						combinedPrefixEqualities[KernelDataFilter{eventID, k}] = struct{}{}
+						af.enabledKernel.prefixMatch = true
+					}
+					for k := range filter.Equalities().NotEqualPrefix {
+						combinedNotPrefixEqualities[KernelDataFilter{eventID, k}] = struct{}{}
+						af.enabledKernel.notPrefixMatch = true
+						af.enabledKernel.prefixMatch = true
+					}
+
+					// Suffix match
+					for k := range filter.Equalities().EqualSuffix {
+						reversed := utils.ReverseString(k)
+						combinedSuffixEqualities[KernelDataFilter{eventID, reversed}] = struct{}{}
+						af.enabledKernel.suffixMatch = true
+					}
+					for k := range filter.Equalities().NotEqualSuffix {
+						reversed := utils.ReverseString(k)
+						combinedNotSuffixEqualities[KernelDataFilter{eventID, reversed}] = struct{}{}
+						af.enabledKernel.notSuffixMatch = true
+						af.enabledKernel.suffixMatch = true
+					}
+				}
+			}
+		}
+	}
+
+	return DataFilterEqualities{
+		Equal:          combinedEqualities,
+		NotEqual:       combinedNotEqualities,
+		EqualPrefix:    combinedPrefixEqualities,
+		NotEqualPrefix: combinedNotPrefixEqualities,
+		EqualSuffix:    combinedSuffixEqualities,
+		NotEqualSuffix: combinedNotSuffixEqualities,
 	}
 }
 
@@ -35,6 +150,20 @@ func (af *DataFilter) GetEventFilters(eventID events.ID) map[string]Filter[*Stri
 func (af *DataFilter) Filter(eventID events.ID, data []trace.Argument) bool {
 	if !af.Enabled() {
 		return true
+	}
+
+	// don't Filter this special case
+	for _, filterEventID := range inKernelFilterEventIDs {
+		if eventID == filterEventID {
+			if filterMap, ok := af.filters[eventID]; ok {
+				if fieldName, ok := filterMap["pathname"]; ok {
+					if _, ok := fieldName.(*StringFilter); ok {
+						return true
+					}
+				}
+			}
+			break
+		}
 	}
 
 	// TODO: remove once events params are introduced
@@ -121,6 +250,12 @@ func (af *DataFilter) Parse(filterName string, operatorAndValues string, eventsN
 	// before the filter is applied
 	valueHandler := func(val string) (string, error) {
 		switch id {
+		case events.SecurityFileOpen,
+			events.MagicWrite,
+			events.SecurityMmapFile:
+			if dataName == "pathname" {
+				af.EnableKernel()
+			}
 		case events.SysEnter,
 			events.SysExit:
 			if dataName == "syscall" { // handle either syscall name or syscall id
@@ -196,6 +331,18 @@ func (af *DataFilter) Enable() {
 	}
 }
 
+func (af *DataFilter) EnableKernel() {
+	for _, eventID := range inKernelFilterEventIDs {
+		if filterMap, ok := af.filters[eventID]; ok {
+			if fieldName, ok := filterMap["pathname"]; ok {
+				if strFilter, ok := fieldName.(*StringFilter); ok {
+					strFilter.Enable()
+				}
+			}
+		}
+	}
+}
+
 func (af *DataFilter) Disable() {
 	af.enabled = false
 	for _, filterMap := range af.filters {
@@ -207,6 +354,30 @@ func (af *DataFilter) Disable() {
 
 func (af *DataFilter) Enabled() bool {
 	return af.enabled
+}
+
+func (af *DataFilter) EnabledExcatlyMatch() bool {
+	return af.enabledKernel.exactMatch
+}
+
+func (af *DataFilter) EnabledPrefixMatch() bool {
+	return af.enabledKernel.prefixMatch
+}
+
+func (af *DataFilter) EnabledSuffixMatch() bool {
+	return af.enabledKernel.suffixMatch
+}
+
+func (af *DataFilter) FilterOutExcatMatch() bool {
+	return af.enabledKernel.notExactMatch
+}
+
+func (af *DataFilter) FilterOutPrefixMatch() bool {
+	return af.enabledKernel.notPrefixMatch
+}
+
+func (af *DataFilter) FilterOutSuffixMatch() bool {
+	return af.enabledKernel.notSuffixMatch
 }
 
 func (af *DataFilter) Clone() *DataFilter {
