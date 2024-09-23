@@ -16,7 +16,9 @@ statfunc u64 binary_filter_matches(u64, void *, proc_info_t *);
 statfunc u64 equality_filter_matches(u64, void *, void *);
 statfunc u64 bool_filter_matches(u64, bool);
 statfunc u64 match_scope_filters(program_data_t *);
+statfunc u64 match_data_filters(program_data_t *, u8);
 statfunc bool evaluate_scope_filters(program_data_t *);
+statfunc bool evaluate_data_filters(program_data_t *, u8);
 statfunc bool event_is_selected(u32, u16);
 statfunc bool policies_matched(event_data_t *);
 
@@ -189,6 +191,25 @@ statfunc u64 bool_filter_matches(u64 filter_out_scopes, bool val)
     return filter_out_scopes ^ (val ? ~0ULL : 0);
 }
 
+statfunc void reverse_string(char *dst, char *src, int len)
+{
+    uint i;
+
+    // don't count null-termination since we will force it at the end
+    len = (len - 1) & MAX_DATA_FILTER_STR_SIZE_MASK;
+
+    // Copy with safe bounds checking
+    for (i = 0; i < len; i++) {
+        if (i >= MAX_DATA_FILTER_STR_SIZE){
+            break;
+        }
+        dst[i] = src[(len - 1 - i) & MAX_DATA_FILTER_STR_SIZE_MASK];
+    }
+
+    // Force null-termination at the end
+    dst[i] = '\0';
+}
+
 statfunc u64 match_scope_filters(program_data_t *p)
 {
     task_context_t *context = &p->event->context.task;
@@ -343,10 +364,95 @@ statfunc u64 match_scope_filters(program_data_t *p)
     return res & policies_cfg->enabled_scopes;
 }
 
+// Function to evaluate data filters based on the program data and index.
+// Returns policies bitmap.
+//
+// Parameters:
+// - program_data_t *p: Pointer to the program data structure.
+// - u8 index: Index of the string data to be used as filter.
+statfunc u64 match_data_filters(program_data_t *p, u8 index)
+{
+    policies_config_t *policies_cfg = &p->event->policies_config;
+    u64 res = ~0ULL;
+
+    u16 version = p->event->context.policies_version;
+    void *filter_map = NULL;
+
+    if (!(policies_cfg->exact_enabled_data_filters ||
+        policies_cfg->prefix_enabled_data_filters ||
+        policies_cfg->suffix_enabled_data_filters))
+        return 0;
+
+    data_filter_lpm_key_t *key = get_data_filter_buf(0);
+    if (key == NULL)
+        return 0;
+
+    // get event ID
+    key->event_id = p->event->context.eventid;
+
+    // get string based on index
+    __builtin_memset(key->str, 0, sizeof(key->str));
+    u32 len = load_str_from_buf(&p->event->args_buf, key->str, index);
+    if (!len)
+        return 0;
+
+    // len + size of event id
+    // prefixlen need to be multipled by 8
+    key->prefix_len = (len + sizeof(u32)) * 8;
+
+    // Exact match
+    if (policies_cfg->exact_enabled_data_filters) {
+        // skip prefixlen by casting to obtain the key for exact match
+        data_filter_key_t *key_exact = (data_filter_key_t *) &key->event_id;
+
+        u64 filter_out_scopes = policies_cfg->exact_out_data_filters;
+        u64 mask = ~policies_cfg->exact_enabled_data_filters;
+        filter_map = get_filter_map(&data_filter_exact_version, version);
+        res &= equality_filter_matches(filter_out_scopes, filter_map, key_exact) | mask;
+    }
+
+    // Prefix match
+    if (policies_cfg->prefix_enabled_data_filters) {
+        u64 filter_out_scopes = policies_cfg->prefix_out_data_filters;
+        u64 mask = ~policies_cfg->prefix_enabled_data_filters;
+        filter_map = get_filter_map(&data_filter_prefix_version, version);
+        res &= equality_filter_matches(filter_out_scopes, filter_map, key) | mask;
+    }
+
+    // Suffix match
+    if (policies_cfg->suffix_enabled_data_filters) {
+        data_filter_lpm_key_t *key_suffix = get_data_filter_buf(1);
+
+        if (key_suffix == NULL)
+            return 0;
+
+        // copy from prefix_len
+        key_suffix->prefix_len = key->prefix_len;
+        key_suffix->event_id = key->event_id;
+
+        // reverse string for suffix match
+        __builtin_memset(key_suffix->str, 0, sizeof(key_suffix->str));
+        reverse_string(key_suffix->str, key->str, len);
+
+        u64 filter_out_scopes = policies_cfg->suffix_out_data_filters;
+        u64 mask = ~policies_cfg->suffix_enabled_data_filters;
+        filter_map = get_filter_map(&data_filter_suffix_version, version);
+        res &= equality_filter_matches(filter_out_scopes, filter_map, key_suffix) | mask;
+    }
+    return res & policies_cfg->enabled_data_filters;
+}
+
 statfunc bool evaluate_scope_filters(program_data_t *p)
 {
     u64 matched_scopes = match_scope_filters(p);
     p->event->context.matched_policies &= matched_scopes;
+    return p->event->context.matched_policies != 0;
+}
+
+statfunc bool evaluate_data_filters(program_data_t *p, u8 index)
+{
+    u64 matched_data_filter = match_data_filters(p, index);
+    p->event->context.matched_policies &= matched_data_filter;
     return p->event->context.matched_policies != 0;
 }
 
