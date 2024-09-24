@@ -27,6 +27,9 @@ const (
 	PidNSFilterMapVersion       = "pid_ns_filter_version"
 	UTSFilterMapVersion         = "uts_ns_filter_version"
 	CommFilterMapVersion        = "comm_filter_version"
+	DataFilterPrefixMapVersion  = "data_filter_prefix_version"
+	DataFilterSuffixMapVersion  = "data_filter_suffix_version"
+	DataFilterExactMapVersion   = "data_filter_exact_version"
 	CgroupIdFilterVersion       = "cgroup_id_filter_version"
 	ProcessTreeFilterMapVersion = "process_tree_map_version"
 	BinaryFilterMapVersion      = "binary_filter_version"
@@ -39,6 +42,9 @@ const (
 	PidNSFilterMap       = "pid_ns_filter"
 	UTSFilterMap         = "uts_ns_filter"
 	CommFilterMap        = "comm_filter"
+	DataFilterPrefixMap  = "data_filter_prefix"
+	DataFilterSuffixMap  = "data_filter_suffix"
+	DataFilterExactMap   = "data_filter_exact"
 	CgroupIdFilterMap    = "cgroup_id_filter"
 	ProcessTreeFilterMap = "process_tree_map"
 	BinaryFilterMap      = "binary_filter"
@@ -120,6 +126,9 @@ func (ps *policies) createNewFilterMapsVersion(bpfModule *bpf.Module) error {
 		PidNSFilterMap:       PidNSFilterMapVersion,
 		UTSFilterMap:         UTSFilterMapVersion,
 		CommFilterMap:        CommFilterMapVersion,
+		DataFilterPrefixMap:  DataFilterPrefixMapVersion,
+		DataFilterSuffixMap:  DataFilterSuffixMapVersion,
+		DataFilterExactMap:   DataFilterExactMapVersion,
 		CgroupIdFilterMap:    CgroupIdFilterVersion,
 		ProcessTreeFilterMap: ProcessTreeFilterMapVersion,
 		BinaryFilterMap:      BinaryFilterMapVersion,
@@ -135,15 +144,18 @@ func (ps *policies) createNewFilterMapsVersion(bpfModule *bpf.Module) error {
 		}
 
 		// outerMap maps:
-		// 1. uid_filter_version           u16, uid_filter
-		// 2. pid_filter_version           u16, pid_filter
-		// 3. mnt_ns_filter_version        u16, mnt_ns_filter
-		// 4. pid_ns_filter_version        u16, pid_ns_filter
-		// 5. cgroup_id_filter_version     u16, cgroup_id_filter
-		// 6. uts_ns_filter_version        u16, uts_ns_filter
-		// 7. comm_filter_version          u16, comm_filter
-		// 8. process_tree_filter_version  u16, process_tree_filter
-		// 9. binary_filter_version        u16, binary_filter
+		// 1. uid_filter_version           	u16, uid_filter
+		// 2. pid_filter_version           	u16, pid_filter
+		// 3. mnt_ns_filter_version        	u16, mnt_ns_filter
+		// 4. pid_ns_filter_version        	u16, pid_ns_filter
+		// 5. cgroup_id_filter_version     	u16, cgroup_id_filter
+		// 6. uts_ns_filter_version        	u16, uts_ns_filter
+		// 7. comm_filter_version          	u16, comm_filter
+		// 8. data_filter_prefix_version	u16, data_filter_prefix
+		// 9. data_filter_suffix_version	u16, data_filter_suffix
+		// 10. data_filter_exact_version	u16, data_filter_exact
+		// 11. process_tree_filter_version	u16, process_tree_filter
+		// 12. binary_filter_version		u16, binary_filter
 		if err := updateOuterMap(bpfModule, outerMapName, polsVersion, newInnerMap); err != nil {
 			return errfmt.WrapError(err)
 		}
@@ -240,8 +252,11 @@ const (
 // updateStringFilterBPF updates the BPF maps for the given string equalities.
 func (ps *policies) updateStringFilterBPF(strEqualities map[string]equality, innerMapName string) error {
 	// String equalities
-	// 1. uts_ns_filter  string_filter_t, eq_t
-	// 2. comm_filter    string_filter_t, eq_t
+	// 1. uts_ns_filter  			string_filter_t, eq_t
+	// 2. comm_filter    			string_filter_t, eq_t
+	// 3. data_filter_prefix		string_filter_t, eq_t
+	// 4. data_filter_suffix		string_filter_t, eq_t
+	// 5. data_filter_exact			string_filter_t, eq_t
 
 	for k, v := range strEqualities {
 		byteStr := make([]byte, maxBpfStrFilterSize)
@@ -358,6 +373,9 @@ func (ps *policies) updateProcTreeFilterBPF(procTreeEqualities map[uint32]equali
 const (
 	maxBpfBinPathSize = 256 // maximum binary path size supported by BPF (MAX_BIN_PATH_SIZE)
 	bpfBinFilterSize  = 264 // the key size of the BPF binary filter map entry
+
+	maxBpfDataFilterStrSize = 128 // maximum str size supported by Data filter in BPF (MAX_DATA_FILTER_STR_SIZE)
+	bpfDataFilterStrSize    = 136 // path size + 4 bytes prefix len + 4 bytes event id
 )
 
 // updateBinaryFilterBPF updates the BPF maps for the given binary equalities.
@@ -378,6 +396,82 @@ func (ps *policies) updateBinaryFilterBPF(binEqualities map[filters.NSBinary]equ
 			binary.LittleEndian.PutUint32(binBytes, k.MntNS)
 			copy(binBytes[4:], k.Path)
 		}
+		keyPointer := unsafe.Pointer(&binBytes[0])
+
+		eqVal := make([]byte, equalityValueSize)
+		valuePointer := unsafe.Pointer(&eqVal[0])
+
+		binary.LittleEndian.PutUint64(eqVal[0:8], v.equalInPolicies)
+		binary.LittleEndian.PutUint64(eqVal[8:16], v.equalitySetInPolicies)
+
+		bpfMap, ok := ps.bpfInnerMaps[innerMapName]
+		if !ok {
+			return errfmt.Errorf("bpf map not found: %s", innerMapName)
+		}
+		if err := bpfMap.Update(keyPointer, valuePointer); err != nil {
+			return errfmt.WrapError(err)
+		}
+	}
+
+	return nil
+}
+
+// updateDataFilterBPF updates the BPF maps for the given kernel data equalities.
+func (ps *policies) updateDataFilterLPMBPF(dataEqualities map[filters.KernelDataFilter]equality, innerMapName string) error {
+	// KernelData equality
+	// 1. data_filter  data_filter_key, eq_t
+
+	for k, v := range dataEqualities {
+		// Ensure the string length is within the maximum allowed limit,
+		// excluding the NULL terminator.
+		if len(k.String) > maxBpfDataFilterStrSize-1 {
+			return filters.InvalidValue(k.String)
+		}
+		binBytes := make([]byte, bpfDataFilterStrSize)
+
+		// key is composed of: prefixlen, event.ID and the path
+		prefixlen := ((len(k.String) + 4) * 8)
+		binary.LittleEndian.PutUint32(binBytes, uint32(prefixlen)) // prefixlen
+		binary.LittleEndian.PutUint32(binBytes[4:], uint32(k.ID))  // eventid
+		copy(binBytes[8:], k.String)                               // path
+
+		keyPointer := unsafe.Pointer(&binBytes[0])
+
+		eqVal := make([]byte, equalityValueSize)
+		valuePointer := unsafe.Pointer(&eqVal[0])
+
+		binary.LittleEndian.PutUint64(eqVal[0:8], v.equalInPolicies)
+		binary.LittleEndian.PutUint64(eqVal[8:16], v.equalitySetInPolicies)
+
+		bpfMap, ok := ps.bpfInnerMaps[innerMapName]
+		if !ok {
+			return errfmt.Errorf("bpf map not found: %s", innerMapName)
+		}
+		if err := bpfMap.Update(keyPointer, valuePointer); err != nil {
+			return errfmt.WrapError(err)
+		}
+	}
+
+	return nil
+}
+
+// updateDataFilterBPF updates the BPF maps for the given kernel data equalities.
+func (ps *policies) updateDataFilterBPF(dataEqualities map[filters.KernelDataFilter]equality, innerMapName string) error {
+	// KernelData equality
+	// 1. data_filter  data_filter_key, eq_t
+
+	for k, v := range dataEqualities {
+		// Ensure the string length is within the maximum allowed limit,
+		// excluding the NULL terminator.
+		if len(k.String) > maxBpfDataFilterStrSize-1 {
+			return filters.InvalidValue(k.String)
+		}
+		binBytes := make([]byte, bpfDataFilterStrSize)
+
+		// key is composed of: event.ID and the path
+		binary.LittleEndian.PutUint32(binBytes, uint32(k.ID)) // eventid
+		copy(binBytes[4:], k.String)                          // path
+
 		keyPointer := unsafe.Pointer(&binBytes[0])
 
 		eqVal := make([]byte, equalityValueSize)
@@ -463,14 +557,17 @@ func (ps *policies) updateBPF(
 	}
 
 	fEqs := &filtersEqualities{
-		uidEqualities:      make(map[uint64]equality),
-		pidEqualities:      make(map[uint64]equality),
-		mntNSEqualities:    make(map[uint64]equality),
-		pidNSEqualities:    make(map[uint64]equality),
-		cgroupIdEqualities: make(map[uint64]equality),
-		utsEqualities:      make(map[string]equality),
-		commEqualities:     make(map[string]equality),
-		binaryEqualities:   make(map[filters.NSBinary]equality),
+		uidEqualities:        make(map[uint64]equality),
+		pidEqualities:        make(map[uint64]equality),
+		mntNSEqualities:      make(map[uint64]equality),
+		pidNSEqualities:      make(map[uint64]equality),
+		cgroupIdEqualities:   make(map[uint64]equality),
+		utsEqualities:        make(map[string]equality),
+		commEqualities:       make(map[string]equality),
+		dataEqualitiesPrefix: make(map[filters.KernelDataFilter]equality),
+		dataEqualitiesSuffix: make(map[filters.KernelDataFilter]equality),
+		dataEqualitiesExact:  make(map[filters.KernelDataFilter]equality),
+		binaryEqualities:     make(map[filters.NSBinary]equality),
 	}
 
 	if err := ps.computeFilterEqualities(fEqs, cts); err != nil {
@@ -506,6 +603,21 @@ func (ps *policies) updateBPF(
 		return nil, errfmt.WrapError(err)
 	}
 	if err := ps.updateStringFilterBPF(fEqs.commEqualities, CommFilterMap); err != nil {
+		return nil, errfmt.WrapError(err)
+	}
+
+	// Data Filter - Exact match
+	if err := ps.updateDataFilterBPF(fEqs.dataEqualitiesExact, DataFilterExactMap); err != nil {
+		return nil, errfmt.WrapError(err)
+	}
+
+	// Data Filter - Prefix match
+	if err := ps.updateDataFilterLPMBPF(fEqs.dataEqualitiesPrefix, DataFilterPrefixMap); err != nil {
+		return nil, errfmt.WrapError(err)
+	}
+
+	// Data Filter - Suffix match
+	if err := ps.updateDataFilterLPMBPF(fEqs.dataEqualitiesSuffix, DataFilterSuffixMap); err != nil {
 		return nil, errfmt.WrapError(err)
 	}
 
@@ -600,6 +712,15 @@ type PoliciesConfig struct {
 
 	EnabledScopes uint64
 
+	ExactEnabledDataFilters  uint64
+	PrefixEnabledDataFilters uint64
+	SuffixEnabledDataFilters uint64
+	ExactOutDataFilters      uint64
+	PrefixOutDataFilters     uint64
+	SuffixOutDataFilters     uint64
+
+	EnabledDataFilters uint64
+
 	UidMax uint64
 	UidMin uint64
 	PidMax uint64
@@ -666,6 +787,15 @@ func (ps *policies) computePoliciesConfig() *PoliciesConfig {
 		if p.Follow {
 			cfg.FollowFilterEnabledScopes |= 1 << offset
 		}
+		if p.DataFilter.EnabledExcatlyMatch() {
+			cfg.ExactEnabledDataFilters |= 1 << offset
+		}
+		if p.DataFilter.EnabledPrefixMatch() {
+			cfg.PrefixEnabledDataFilters |= 1 << offset
+		}
+		if p.DataFilter.EnabledSuffixMatch() {
+			cfg.SuffixEnabledDataFilters |= 1 << offset
+		}
 
 		// filter out scopes bitmap
 		if p.UIDFilter.FilterOut() {
@@ -704,8 +834,18 @@ func (ps *policies) computePoliciesConfig() *PoliciesConfig {
 		if p.BinaryFilter.FilterOut() {
 			cfg.BinPathFilterOutScopes |= 1 << offset
 		}
+		if p.DataFilter.FilterOutExcatMatch() {
+			cfg.ExactOutDataFilters |= 1 << offset
+		}
+		if p.DataFilter.FilterOutPrefixMatch() {
+			cfg.PrefixOutDataFilters |= 1 << offset
+		}
+		if p.DataFilter.FilterOutSuffixMatch() {
+			cfg.SuffixOutDataFilters |= 1 << offset
+		}
 
 		cfg.EnabledScopes |= 1 << offset
+		cfg.EnabledDataFilters |= 1 << offset
 	}
 
 	cfg.UidMax = ps.uidFilterMax
