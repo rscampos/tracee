@@ -1,7 +1,9 @@
 package filters
 
 import (
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -26,6 +28,8 @@ func TestDataFilterClone(t *testing.T) {
 		StringFilter{},
 		sets.PrefixSet{},
 		sets.SuffixSet{},
+		MatchTypes{},
+		KernelDataFilter{},
 	)
 	opt2 := cmp.FilterPath(
 		func(p cmp.Path) bool {
@@ -70,6 +74,7 @@ func TestDatasFilter_Filter(t *testing.T) {
 		eventID                events.ID
 		args                   []trace.Argument
 		expected               bool
+		expectedError          error
 	}{
 		// keep a single args (deprecated) filter test that shall break on future removal
 		{
@@ -219,6 +224,59 @@ func TestDatasFilter_Filter(t *testing.T) {
 			},
 			expected: false,
 		},
+
+		// Tests restrictions when a kernel data filter is available for an event.
+		{
+			name:                   "Invalid max length allowed for security file open event (restriction for pathname)",
+			parseFilterName:        "security_file_open.data.pathname",
+			parseOperatorAndValues: "=/etc/passwd" + strings.Repeat("A", 245), // Total length 256
+			parseEventNamesToID:    events.Core.NamesToIDs(),
+			eventID:                events.SecurityFileOpen,
+			args: []trace.Argument{
+				newArgument("pathname", "string", "/etc/passwd"+strings.Repeat("A", 245)),
+			},
+			expected: false,
+			expectedError: errors.New(
+				"filters.(*DataFilter).Parse: filters.(*DataFilter).parseFilter: filters.(*StringFilter).Parse: invalid filter value " +
+					"/etc/passwdAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+					"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+					"AAAAAAAAAAAAAAAAAAAAAAAA exceeds max length 255"),
+		},
+		{
+			name:                   "Valid max length allowed for event open",
+			parseFilterName:        "openat.data.pathname",
+			parseOperatorAndValues: "=/etc/passwd" + strings.Repeat("A", 245), // Total length 256
+			parseEventNamesToID:    events.Core.NamesToIDs(),
+			eventID:                events.Openat,
+			args: []trace.Argument{
+				newArgument("pathname", "string", "/etc/passwd"+strings.Repeat("A", 245)),
+			},
+			expected: true,
+		},
+		{
+			name:                   "Invalid operator contains for security file open (restriction for pathname)",
+			parseFilterName:        "security_file_open.data.pathname",
+			parseOperatorAndValues: "=*passwd*",
+			parseEventNamesToID:    events.Core.NamesToIDs(),
+			eventID:                events.SecurityFileOpen,
+			args: []trace.Argument{
+				newArgument("pathname", "string", "/etc/passwd"),
+			},
+			expected: false,
+			expectedError: errors.New("filters.(*DataFilter).Parse: filters.(*DataFilter).parseFilter: filters.(*StringFilter).Parse: " +
+				"operator not supported for the event and data arg"),
+		},
+		{
+			name:                   "Valid operator contains for open",
+			parseFilterName:        "open.data.pathname",
+			parseOperatorAndValues: "=*passwd*",
+			parseEventNamesToID:    events.Core.NamesToIDs(),
+			eventID:                events.Open,
+			args: []trace.Argument{
+				newArgument("pathname", "string", "/etc/passwd"),
+			},
+			expected: true,
+		},
 	}
 
 	for _, tc := range tt {
@@ -229,10 +287,19 @@ func TestDatasFilter_Filter(t *testing.T) {
 
 			filter := NewDataFilter()
 			err := filter.Parse(tc.parseFilterName, tc.parseOperatorAndValues, tc.parseEventNamesToID)
-			require.NoError(t, err)
 
-			result := filter.Filter(tc.eventID, tc.args)
-			require.Equal(t, tc.expected, result)
+			// Validate error
+			if tc.expectedError != nil {
+				require.EqualError(t, err, tc.expectedError.Error())
+			} else {
+				require.NoError(t, err)
+			}
+
+			// Validate Filter
+			if err == nil {
+				result := filter.Filter(tc.eventID, tc.args)
+				require.Equal(t, tc.expected, result)
+			}
 		})
 	}
 }
