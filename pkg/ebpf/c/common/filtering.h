@@ -160,11 +160,6 @@ statfunc u64 equality_filter_matches(u64 filter_out_scopes, void *filter_map, vo
             equality_set_in_scopes = equality->equality_set_in_scopes;
         }
     }
-    // bpf_printk("filter_out_scopes       : 0x%llx\n", filter_out_scopes);
-    // bpf_printk("equality_set_in_scopes  : 0x%llx\n", equality_set_in_scopes);
-    // bpf_printk("equal_in_scopes         : 0x%llx\n", equal_in_scopes);
-    u64 final = equal_in_scopes | (filter_out_scopes & ~equality_set_in_scopes);
-    // bpf_printk("final                   : 0x%llx\n", final);
 
     return equal_in_scopes | (filter_out_scopes & ~equality_set_in_scopes);
 }
@@ -325,17 +320,7 @@ statfunc u64 match_scope_filters(program_data_t *p)
         u64 mask = ~policies_cfg->comm_filter_enabled_scopes;
 
         filter_map = get_filter_map(&comm_filter_version, version);
-        u64 res_eq = equality_filter_matches(filter_out_scopes, filter_map, &context->comm);
-        bpf_printk(
-            "[DBG] scope out:0x%llx mask:0x%llx res_eq:0x%llx", filter_out_scopes, mask, res_eq);
-        u64 res_final = res & (res_eq | mask);
-        bpf_printk("[DBG][scope] out:%llx mask:%llx res:%llx\n", filter_out_scopes, mask, res);
-        bpf_printk("[DBG][scope] equality:%llx masked:%llx res_final:%llx\n",
-                   res_eq,
-                   res_eq | mask,
-                   res_final);
-
-        res &= res_eq | mask;
+        res &= equality_filter_matches(filter_out_scopes, filter_map, &context->comm) | mask;
     }
 
     if (policies_cfg->cgroup_id_filter_enabled_scopes) {
@@ -418,41 +403,7 @@ statfunc u64 match_data_filters(program_data_t *p, u8 index)
             u64 filter_out_scopes = policies_cfg->exactly_out_data_filters;
             u64 mask = ~policies_cfg->exactly_enabled_data_filters;
             filter_map = get_filter_map(&data_filter_exactly_version, version);
-            u64 final = equality_filter_matches(filter_out_scopes, filter_map, key_exactly);
-            u64 final_mask = final | mask;
-
-            // TODO: debug only - will be removed
-            bpf_printk("[DBG][filter][exactly] [%d] \"%s\" res_old:0x%llx\n",
-                       key->event_id,
-                       key->path,
-                       res);
-            bpf_printk("[DBG][filter][exactly] mask:%llx equality:0x%llx masked:0x%llx\n",
-                       mask,
-                       final,
-                       final_mask);
-            bpf_printk("[DBG][filter][exactly] \"%s\" res_new:0x%llx out:0x%llx\n",
-                       key->path,
-                       (res & final_mask),
-                       filter_out_scopes);
-
-            // TODO: debug only - will be removed
-            if (filter_map) {
-                eq_t *equality = bpf_map_lookup_elem(filter_map, key_exactly);
-                if (equality != NULL) {
-                    u64 equal_in_scopes = equality->equal_in_scopes;
-                    u64 equality_set_in_scopes = equality->equality_set_in_scopes;
-                    bpf_printk("[DBG][exactly]FOUND ikf: %s ID:%d equality:%d\n",
-                               key_exactly->path,
-                               key_exactly->event_id,
-                               equal_in_scopes);
-                    bpf_printk("[DBG][exactly]FOUND ikf: %s res:%llx res_final:%llx\n",
-                               key_exactly->path,
-                               res,
-                               res & final_mask);
-                }
-            }
-
-            res &= final_mask;
+            res &= equality_filter_matches(filter_out_scopes, filter_map, key_exactly) | mask;
         }
 
         // Prefix match
@@ -460,41 +411,7 @@ statfunc u64 match_data_filters(program_data_t *p, u8 index)
             u64 filter_out_scopes = policies_cfg->prefix_out_data_filters;
             u64 mask = ~policies_cfg->prefix_enabled_data_filters;
             filter_map = get_filter_map(&data_filter_prefix_version, version);
-            u64 final = equality_filter_matches(filter_out_scopes, filter_map, key);
-            u64 final_mask = final | mask;
-
-            // TODO: debug only - will be removed
-            bpf_printk("[DBG][filter][prefix] [%d] \"%s\" res_old:0x%llx\n",
-                       key->event_id,
-                       key->path,
-                       res);
-            bpf_printk("[DBG][filter][prefix] mask:%llx equality:0x%llx masked:0x%llx\n",
-                       mask,
-                       final,
-                       final_mask);
-            bpf_printk("[DBG][filter][prefix] \"%s\" res_new:0x%llx out:0x%llx\n",
-                       key->path,
-                       (res & final_mask),
-                       filter_out_scopes);
-
-            // TODO: debug only - will be removed
-            if (filter_map) {
-                eq_t *equality = bpf_map_lookup_elem(filter_map, key);
-                if (equality != NULL) {
-                    u64 equal_in_scopes = equality->equal_in_scopes;
-                    u64 equality_set_in_scopes = equality->equality_set_in_scopes;
-                    bpf_printk("[DBG][prefix]FOUND ikf: %s ID:%d equality:%d\n",
-                               key->path,
-                               p->event->context.eventid,
-                               equal_in_scopes);
-                    bpf_printk("[DBG][prefix]FOUND ikf: %s res:%llx res_final:%llx\n",
-                               key->path,
-                               res,
-                               res & final_mask);
-                }
-            }
-
-            res &= final_mask;
+            res &= equality_filter_matches(filter_out_scopes, filter_map, key) | mask;
         }
 
         // Suffix match
@@ -515,44 +432,7 @@ statfunc u64 match_data_filters(program_data_t *p, u8 index)
             u64 filter_out_scopes = policies_cfg->suffix_out_data_filters;
             u64 mask = ~policies_cfg->suffix_enabled_data_filters;
             filter_map = get_filter_map(&data_filter_suffix_version, version);
-            u64 final = equality_filter_matches(filter_out_scopes, filter_map, key_suffix);
-            u64 final_mask = final | mask;
-
-            // TODO: debug only - will be removed
-            bpf_printk("[DBG][suffix][reverse ][sz:%d][%s]", len, key_suffix->path);
-            bpf_printk("[DBG][suffix][original][sz:%d][%s]", len, key->path);
-
-            bpf_printk("[DBG][filter][suffix] [%d] \"%s\" res_old:0x%llx\n",
-                       key->event_id,
-                       key->path,
-                       res);
-            bpf_printk("[DBG][filter][suffix] mask:%llx equality:0x%llx masked:0x%llx\n",
-                       mask,
-                       final,
-                       final_mask);
-            bpf_printk("[DBG][filter][suffix] \"%s\" res_new:0x%llx out:0x%llx\n",
-                       key->path,
-                       (res & final_mask),
-                       filter_out_scopes);
-
-            // TODO: debug only - will be removed
-            if (filter_map) {
-                eq_t *equality = bpf_map_lookup_elem(filter_map, key_suffix);
-                if (equality != NULL) {
-                    u64 equal_in_scopes = equality->equal_in_scopes;
-                    u64 equality_set_in_scopes = equality->equality_set_in_scopes;
-                    bpf_printk("[DBG][suffix]FOUND ikf: %s ID:%d equality:%d\n",
-                               key_suffix->path,
-                               p->event->context.eventid,
-                               equal_in_scopes);
-                    bpf_printk("[DBG][suffix]FOUND ikf: %s res:%llx res_final:%llx\n",
-                               key_suffix->path,
-                               res,
-                               res & final_mask);
-                }
-            }
-
-            res &= final_mask;
+            res &= equality_filter_matches(filter_out_scopes, filter_map, key) | mask;
         }
     }
     return res & policies_cfg->enabled_data_filters;
@@ -561,11 +441,6 @@ statfunc u64 match_data_filters(program_data_t *p, u8 index)
 statfunc bool evaluate_scope_filters(program_data_t *p)
 {
     u64 matched_scopes = match_scope_filters(p);
-    bpf_printk("[DBG] matched_scopes                       : 0x%llx\n", matched_scopes);
-    bpf_printk("[DBG] matched_policies                     : 0x%llx\n",
-               p->event->context.matched_policies);
-    bpf_printk("[DBG] matched_policies&matched_scopes      : 0x%llx\n",
-               p->event->context.matched_policies & matched_scopes);
     p->event->context.matched_policies &= matched_scopes;
     return p->event->context.matched_policies != 0;
 }
@@ -573,11 +448,6 @@ statfunc bool evaluate_scope_filters(program_data_t *p)
 statfunc bool evaluate_data_filters(program_data_t *p, u8 index)
 {
     u64 matched_data_filter = match_data_filters(p, index);
-    bpf_printk("[DBG] matched_data_filter                  : 0x%llx\n", matched_data_filter);
-    bpf_printk("[DBG] matched_policies                     : 0x%llx\n",
-               p->event->context.matched_policies);
-    bpf_printk("[DBG] matched_policies&matched_data_filter : 0x%llx\n",
-               p->event->context.matched_policies & matched_data_filter);
     p->event->context.matched_policies &= matched_data_filter;
     return p->event->context.matched_policies != 0;
 }
