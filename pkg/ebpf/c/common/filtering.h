@@ -432,7 +432,7 @@ statfunc u64 match_data_filters(program_data_t *p, u8 index)
             u64 filter_out_scopes = policies_cfg->suffix_out_data_filters;
             u64 mask = ~policies_cfg->suffix_enabled_data_filters;
             filter_map = get_filter_map(&data_filter_suffix_version, version);
-            res &= equality_filter_matches(filter_out_scopes, filter_map, key) | mask;
+            res &= equality_filter_matches(filter_out_scopes, filter_map, key_suffix) | mask;
         }
     }
     return res & policies_cfg->enabled_data_filters;
