@@ -198,6 +198,7 @@ statfunc int init_program_data(program_data_t *p, void *ctx, u32 event_id)
         if (event_config != NULL) {
             p->event->config.field_types = event_config->field_types;
             p->event->config.submit_for_policies = event_config->submit_for_policies;
+            p->event->config.data_filter = event_config->data_filter;
         }
     }
 

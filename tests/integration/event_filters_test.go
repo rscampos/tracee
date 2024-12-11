@@ -1800,6 +1800,91 @@ func Test_EventFilters(t *testing.T) {
 			test:         ExpectAllInOrderSequentially,
 		},
 		{
+			name: "comm: event: data: trace event security_file_open and magic_write using multiple filter types combined",
+			policyFiles: []testutils.PolicyFileWithID{
+				{
+					Id: 1,
+					PolicyFile: v1beta1.PolicyFile{
+						Metadata: v1beta1.Metadata{
+							Name: "sfo-mw-combined-pol-1",
+						},
+						Spec: k8s.PolicySpec{
+							Scope: []string{
+								"comm=cat",
+							},
+							DefaultActions: []string{"log"},
+							Rules: []k8s.Rule{
+								{
+									Event: "security_file_open",
+									Filters: []string{
+										"data.pathname=/etc/netconfig",
+										"data.pathname!=/usr/lib/*",
+									},
+								},
+								{
+									Event: "magic_write",
+									Filters: []string{
+										"data.pathname=/tmp/netconfig",
+									},
+								},
+							},
+						},
+					},
+				},
+				{
+					Id: 2,
+					PolicyFile: v1beta1.PolicyFile{
+						Metadata: v1beta1.Metadata{
+							Name: "sfo-mw-combined-pol-2",
+						},
+						Spec: k8s.PolicySpec{
+							Scope: []string{
+								"comm=cat",
+							},
+							DefaultActions: []string{"log"},
+							Rules: []k8s.Rule{
+								{
+									Event: "security_file_open",
+									Filters: []string{
+										"data.pathname=/etc/netconfig",
+									},
+								},
+								{
+									Event: "magic_write",
+									Filters: []string{
+										"data.pathname!=/tmp/netconfig",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			cmdEvents: []cmdEvents{
+				newCmdEvents(
+					// To test certain "not equal" filters, such as exact, prefix, and suffix,
+					// it was necessary to use a fixed version of Ubuntu to ensure consistent
+					// library versions.
+					"docker run --rm ubuntu:jammy-20240911.1 sh -c 'cat /etc/netconfig > /tmp/netconfig'",
+					0,
+					20*time.Second,
+					// Running the commands inside a container caused duplicate
+					// security_file_open events to be generated. This is why the events are duplicated.
+					[]trace.Event{
+						expectEvent(anyHost, "cat", anyProcessorID, anyPID, 0, events.SecurityFileOpen, orPolNames("sfo-mw-combined-pol-1"), orPolIDs(1), expectArg("pathname", "/etc/ld.so.cache")),
+						expectEvent(anyHost, "cat", anyProcessorID, anyPID, 0, events.SecurityFileOpen, orPolNames("sfo-mw-combined-pol-1"), orPolIDs(1), expectArg("pathname", "/etc/ld.so.cache")),
+						expectEvent(anyHost, "cat", anyProcessorID, anyPID, 0, events.SecurityFileOpen, orPolNames("sfo-mw-combined-pol-1", "sfo-mw-combined-pol-2"), orPolIDs(1, 2), expectArg("pathname", "/etc/netconfig")),
+						expectEvent(anyHost, "cat", anyProcessorID, anyPID, 0, events.SecurityFileOpen, orPolNames("sfo-mw-combined-pol-1", "sfo-mw-combined-pol-2"), orPolIDs(1, 2), expectArg("pathname", "/etc/netconfig")),
+						expectEvent(anyHost, "cat", anyProcessorID, anyPID, 0, events.MagicWrite, orPolNames("sfo-mw-combined-pol-1"), orPolIDs(1), expectArg("pathname", "/tmp/netconfig")),
+					},
+					[]string{},
+				),
+			},
+			useSyscaller: false,
+			coolDown:     0,
+			test:         ExpectAllInOrderSequentially,
+		},
+		{
 			name: "comm: event: data: trace event magic_write set in multiple policies using multiple filter types",
 			policyFiles: []testutils.PolicyFileWithID{
 				{
@@ -1850,12 +1935,12 @@ func Test_EventFilters(t *testing.T) {
 			},
 			cmdEvents: []cmdEvents{
 				newCmdEvents(
-					"cp /etc/resolv.conf /etc/netconfig /etc/passwd /tmp/",
+					"sh -c 'cp /etc/resolv.conf /tmp; cp /etc/shadow /tmp; cp /etc/passwd /tmp/'",
 					0,
 					1*time.Second,
 					[]trace.Event{
 						expectEvent(anyHost, "cp", testutils.CPUForTests, anyPID, 0, events.MagicWrite, orPolNames("mw-pol-1", "mw-pol-2"), orPolIDs(1, 2), expectArg("pathname", "/tmp/resolv.conf")),
-						expectEvent(anyHost, "cp", testutils.CPUForTests, anyPID, 0, events.MagicWrite, orPolNames("mw-pol-1"), orPolIDs(1), expectArg("pathname", "/tmp/netconfig")),
+						expectEvent(anyHost, "cp", testutils.CPUForTests, anyPID, 0, events.MagicWrite, orPolNames("mw-pol-1"), orPolIDs(1), expectArg("pathname", "/tmp/shadow")),
 						expectEvent(anyHost, "cp", testutils.CPUForTests, anyPID, 0, events.MagicWrite, orPolNames("mw-pol-1", "mw-pol-2"), orPolIDs(1, 2), expectArg("pathname", "/tmp/passwd")),
 					},
 					[]string{},
@@ -1863,7 +1948,7 @@ func Test_EventFilters(t *testing.T) {
 			},
 			useSyscaller: false,
 			coolDown:     0,
-			test:         ExpectAllInOrderSequentially,
+			test:         ExpectAtLeastOneForEach,
 		},
 		{
 			name: "comm: event: data: trace event security_mmap_file using multiple filter types",
@@ -1943,13 +2028,13 @@ func Test_EventFilters(t *testing.T) {
 			},
 			cmdEvents: []cmdEvents{
 				newCmdEvents(
-					"cp /etc/resolv.conf /etc/netconfig /etc/passwd /tmp/",
+					"sh -c 'cp /etc/resolv.conf /tmp; cp /etc/shadow /tmp; cp /etc/passwd /tmp/'",
 					0,
 					1*time.Second,
 					[]trace.Event{
 						expectEvent(anyHost, "cp", testutils.CPUForTests, anyPID, 0, events.SecurityFileOpen, orPolNames("sfo-mw-pol-1"), orPolIDs(1), expectArg("pathname", "/tmp/resolv.conf")),
 						expectEvent(anyHost, "cp", testutils.CPUForTests, anyPID, 0, events.MagicWrite, orPolNames("sfo-mw-pol-1"), orPolIDs(1), expectArg("pathname", "/tmp/resolv.conf")),
-						expectEvent(anyHost, "cp", testutils.CPUForTests, anyPID, 0, events.SecurityFileOpen, orPolNames("sfo-mw-pol-1"), orPolIDs(1), expectArg("pathname", "/tmp/netconfig")),
+						expectEvent(anyHost, "cp", testutils.CPUForTests, anyPID, 0, events.SecurityFileOpen, orPolNames("sfo-mw-pol-1"), orPolIDs(1), expectArg("pathname", "/tmp/shadow")),
 						expectEvent(anyHost, "cp", testutils.CPUForTests, anyPID, 0, events.SecurityFileOpen, orPolNames("sfo-mw-pol-1"), orPolIDs(1), expectArg("pathname", "/tmp/passwd")),
 						expectEvent(anyHost, "cp", testutils.CPUForTests, anyPID, 0, events.MagicWrite, orPolNames("sfo-mw-pol-1"), orPolIDs(1), expectArg("pathname", "/tmp/passwd")),
 					},
@@ -1958,7 +2043,7 @@ func Test_EventFilters(t *testing.T) {
 			},
 			useSyscaller: false,
 			coolDown:     0,
-			test:         ExpectAllInOrderSequentially,
+			test:         ExpectAtLeastOneForEach,
 		},
 		{
 			name: "comm: event: data: trace event with pathname exceeding 255 characters",

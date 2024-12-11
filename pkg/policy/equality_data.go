@@ -6,19 +6,18 @@ import (
 	"github.com/aquasecurity/tracee/pkg/utils"
 )
 
-// Constants for match states (kernel)
-const (
-	exactMatchEnabled = 1 << iota
-	notExactMatchEnabled
-	prefixMatchEnabled
-	notPrefixMatchEnabled
-	suffixMatchEnabled
-	notSuffixMatchEnabled
-)
+type dataFilterConfig struct {
+	string stringFilterConfig
+	// other types of filters
+}
 
-// KernelMatchStates - stores the bitfield for match states
-type KernelMatchStates struct {
-	matchState uint8
+type stringFilterConfig struct {
+	prefixEnabled           uint64
+	suffixEnabled           uint64
+	exactEnabled            uint64
+	prefixMatchIfKeyMissing uint64
+	suffixMatchIfKeyMissing uint64
+	exactMatchIfKeyMissing  uint64
 }
 
 type KernelDataFields struct {
@@ -26,9 +25,57 @@ type KernelDataFields struct {
 	String string
 }
 
+func (d *stringFilterConfig) EnableExact(policyID int) {
+	d.exactEnabled |= 1 << policyID
+}
+
+func (d *stringFilterConfig) EnablePrefix(policyID int) {
+	d.prefixEnabled |= 1 << policyID
+}
+
+func (d *stringFilterConfig) EnableSuffix(policyID int) {
+	d.suffixEnabled |= 1 << policyID
+}
+
+func (d *stringFilterConfig) EnablePrefixMatchIfKeyMissing(policyID int) {
+	d.prefixMatchIfKeyMissing |= 1 << policyID
+}
+
+func (d *stringFilterConfig) EnableSuffixMatchIfKeyMissing(policyID int) {
+	d.suffixMatchIfKeyMissing |= 1 << policyID
+}
+
+func (d *stringFilterConfig) EnableExactMatchIfKeyMissing(policyID int) {
+	d.exactMatchIfKeyMissing |= 1 << policyID
+}
+
+func combineEventBitmap(eventsMap map[events.ID]stringFilterConfig, eventID events.ID, strCfgFilter *stringFilterConfig) {
+	existingFilter, exists := eventsMap[eventID]
+	if !exists {
+		eventsMap[eventID] = stringFilterConfig{
+			prefixEnabled:           strCfgFilter.prefixEnabled,
+			suffixEnabled:           strCfgFilter.suffixEnabled,
+			exactEnabled:            strCfgFilter.exactEnabled,
+			prefixMatchIfKeyMissing: strCfgFilter.prefixMatchIfKeyMissing,
+			suffixMatchIfKeyMissing: strCfgFilter.suffixMatchIfKeyMissing,
+			exactMatchIfKeyMissing:  strCfgFilter.exactMatchIfKeyMissing,
+		}
+		return
+	}
+
+	existingFilter.prefixEnabled |= strCfgFilter.prefixEnabled
+	existingFilter.suffixEnabled |= strCfgFilter.suffixEnabled
+	existingFilter.exactEnabled |= strCfgFilter.exactEnabled
+	existingFilter.prefixMatchIfKeyMissing |= strCfgFilter.prefixMatchIfKeyMissing
+	existingFilter.suffixMatchIfKeyMissing |= strCfgFilter.suffixMatchIfKeyMissing
+	existingFilter.exactMatchIfKeyMissing |= strCfgFilter.exactMatchIfKeyMissing
+
+	eventsMap[eventID] = existingFilter
+}
+
 // computeDataFilterEqualities computes the equalities for the kernel data filter
 // in the policies updating the provided eqs map.
-func (ps *policies) computeDataFilterEqualities(fEqs *filtersEqualities) error {
+func (ps *policies) computeDataFilterEqualities(fEqs *filtersEqualities, eventsConfig map[events.ID]stringFilterConfig) error {
 	for _, p := range ps.allFromMap() {
 		// Reinitialize variables at the start of each iteration
 		combinedEqualities := make(map[KernelDataFields]struct{})
@@ -40,13 +87,17 @@ func (ps *policies) computeDataFilterEqualities(fEqs *filtersEqualities) error {
 
 		policyID := p.ID
 		for eventID, rule := range p.Rules {
+			strCfgFilter := &stringFilterConfig{}
 			equalities, err := rule.DataFilter.Equalities()
 			if err != nil {
 				continue
 			}
-			ps.handleExactMatches(policyID, eventID, equalities, combinedEqualities, combinedNotEqualities)
-			ps.handlePrefixMatches(policyID, eventID, equalities, combinedPrefixEqualities, combinedNotPrefixEqualities)
-			ps.handleSuffixMatches(policyID, eventID, equalities, combinedSuffixEqualities, combinedNotSuffixEqualities)
+			ps.handleExactMatches(policyID, eventID, strCfgFilter, equalities, combinedEqualities, combinedNotEqualities)
+			ps.handlePrefixMatches(policyID, eventID, strCfgFilter, equalities, combinedPrefixEqualities, combinedNotPrefixEqualities)
+			ps.handleSuffixMatches(policyID, eventID, strCfgFilter, equalities, combinedSuffixEqualities, combinedNotSuffixEqualities)
+
+			// Combine the event bitmap across all policies
+			combineEventBitmap(eventsConfig, eventID, strCfgFilter)
 		}
 
 		// Exact match equalities
@@ -65,72 +116,46 @@ func (ps *policies) computeDataFilterEqualities(fEqs *filtersEqualities) error {
 	return nil
 }
 
-func (ps *policies) handleExactMatches(policyId int, eventID events.ID, equalities filters.StringFilterEqualities, combinedEqualities, combinedNotEqualities map[KernelDataFields]struct{}) {
+func (ps *policies) handleExactMatches(policyId int, eventID events.ID, filter *stringFilterConfig, equalities filters.StringFilterEqualities, combinedEqualities, combinedNotEqualities map[KernelDataFields]struct{}) {
 	for k := range equalities.ExactEqual {
 		combinedEqualities[KernelDataFields{eventID, k}] = struct{}{}
-		ps.kernellandPolicyMatchStates[policyId].EnableState(exactMatchEnabled)
+
+		filter.EnableExact(policyId)
 	}
 	for k := range equalities.ExactNotEqual {
 		combinedNotEqualities[KernelDataFields{eventID, k}] = struct{}{}
-		ps.kernellandPolicyMatchStates[policyId].EnableState(exactMatchEnabled)
-		ps.kernellandPolicyMatchStates[policyId].EnableState(notExactMatchEnabled)
+
+		filter.EnableExact(policyId)
+		filter.EnableExactMatchIfKeyMissing(policyId)
 	}
 }
 
-func (ps *policies) handlePrefixMatches(policyId int, eventID events.ID, equalities filters.StringFilterEqualities, combinedPrefixEqualities, combinedNotPrefixEqualities map[KernelDataFields]struct{}) {
+func (ps *policies) handlePrefixMatches(policyId int, eventID events.ID, filter *stringFilterConfig, equalities filters.StringFilterEqualities, combinedPrefixEqualities, combinedNotPrefixEqualities map[KernelDataFields]struct{}) {
 	for k := range equalities.PrefixEqual {
 		combinedPrefixEqualities[KernelDataFields{eventID, k}] = struct{}{}
-		ps.kernellandPolicyMatchStates[policyId].EnableState(prefixMatchEnabled)
+
+		filter.EnablePrefix(policyId)
 	}
 	for k := range equalities.PrefixNotEqual {
 		combinedNotPrefixEqualities[KernelDataFields{eventID, k}] = struct{}{}
-		ps.kernellandPolicyMatchStates[policyId].EnableState(prefixMatchEnabled)
-		ps.kernellandPolicyMatchStates[policyId].EnableState(notPrefixMatchEnabled)
+
+		filter.EnablePrefix(policyId)
+		filter.EnablePrefixMatchIfKeyMissing(policyId)
 	}
 }
 
-func (ps *policies) handleSuffixMatches(policyId int, eventID events.ID, equalities filters.StringFilterEqualities, combinedSuffixEqualities, combinedNotSuffixEqualities map[KernelDataFields]struct{}) {
+func (ps *policies) handleSuffixMatches(policyId int, eventID events.ID, filter *stringFilterConfig, equalities filters.StringFilterEqualities, combinedSuffixEqualities, combinedNotSuffixEqualities map[KernelDataFields]struct{}) {
 	for k := range equalities.SuffixEqual {
 		reversed := utils.ReverseString(k)
 		combinedSuffixEqualities[KernelDataFields{eventID, reversed}] = struct{}{}
-		ps.kernellandPolicyMatchStates[policyId].EnableState(suffixMatchEnabled)
+
+		filter.EnableSuffix(policyId)
 	}
 	for k := range equalities.SuffixNotEqual {
 		reversed := utils.ReverseString(k)
 		combinedNotSuffixEqualities[KernelDataFields{eventID, reversed}] = struct{}{}
-		ps.kernellandPolicyMatchStates[policyId].EnableState(suffixMatchEnabled)
-		ps.kernellandPolicyMatchStates[policyId].EnableState(notSuffixMatchEnabled)
+
+		filter.EnableSuffix(policyId)
+		filter.EnableSuffixMatchIfKeyMissing(policyId)
 	}
-}
-
-func (k *KernelMatchStates) EnableState(state uint8) {
-	k.matchState |= state
-}
-
-func (k *KernelMatchStates) IsStateEnabled(state uint8) bool {
-	return k.matchState&state != 0
-}
-
-func (k *KernelMatchStates) EnabledDataExactMatch() bool {
-	return k.IsStateEnabled(exactMatchEnabled)
-}
-
-func (k *KernelMatchStates) MatchIfKeyMissingDataExactMatch() bool {
-	return k.IsStateEnabled(notExactMatchEnabled)
-}
-
-func (k *KernelMatchStates) EnabledDataPrefixMatch() bool {
-	return k.IsStateEnabled(prefixMatchEnabled)
-}
-
-func (k *KernelMatchStates) MatchIfKeyMissingDataPrefixMatch() bool {
-	return k.IsStateEnabled(notPrefixMatchEnabled)
-}
-
-func (k *KernelMatchStates) EnabledDataSuffixMatch() bool {
-	return k.IsStateEnabled(suffixMatchEnabled)
-}
-
-func (k *KernelMatchStates) MatchIfKeyMissingDataSuffixMatch() bool {
-	return k.IsStateEnabled(notSuffixMatchEnabled)
 }

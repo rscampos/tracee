@@ -346,9 +346,11 @@ statfunc u64 match_scope_filters(program_data_t *p)
 statfunc u64 match_data_filters(program_data_t *p, u8 index)
 {
     policies_config_t *policies_cfg = &p->event->policies_config;
+    // Retrieve the string filter for the current event
+    // TODO: Dynamically determine the filter and type based on policy configuration
+    string_filter_config_t *str_filter = &p->event->config.data_filter.string;
 
-    if (!(policies_cfg->data_filter_exact_enabled || policies_cfg->data_filter_prefix_enabled ||
-          policies_cfg->data_filter_suffix_enabled))
+    if (!(str_filter->exact_enabled || str_filter->prefix_enabled || str_filter->suffix_enabled))
         return policies_cfg->enabled_policies;
 
     u64 res = 0;
@@ -362,7 +364,7 @@ statfunc u64 match_data_filters(program_data_t *p, u8 index)
     u16 version = p->event->context.policies_version;
 
     // Exact match
-    if (policies_cfg->data_filter_exact_enabled) {
+    if (str_filter->exact_enabled) {
         data_filter_key_t *key = get_string_data_filter_buf(DATA_FILTER_BUF1_IDX);
         if (key == NULL)
             return 0;
@@ -373,7 +375,7 @@ statfunc u64 match_data_filters(program_data_t *p, u8 index)
         if (!len)
             return 0;
 
-        u64 match_if_key_missing = policies_cfg->data_filter_exact_match_if_key_missing;
+        u64 match_if_key_missing = str_filter->exact_match_if_key_missing;
         filter_map = get_event_filter_map(&data_filter_exact_version, version, eventid);
         res = equality_filter_matches(match_if_key_missing, filter_map, key);
         explicit_enable_policies |= (res & ~match_if_key_missing);
@@ -382,7 +384,7 @@ statfunc u64 match_data_filters(program_data_t *p, u8 index)
     }
 
     // Prefix match
-    if (policies_cfg->data_filter_prefix_enabled) {
+    if (str_filter->prefix_enabled) {
         data_filter_lpm_key_t *key = get_string_data_filter_lpm_buf(DATA_FILTER_BUF1_IDX);
         if (key == NULL)
             return 0;
@@ -396,7 +398,7 @@ statfunc u64 match_data_filters(program_data_t *p, u8 index)
         // https://docs.kernel.org/bpf/map_lpm_trie.html
         key->prefix_len = len * 8;
 
-        u64 match_if_key_missing = policies_cfg->data_filter_prefix_match_if_key_missing;
+        u64 match_if_key_missing = str_filter->prefix_match_if_key_missing;
         filter_map = get_event_filter_map(&data_filter_prefix_version, version, eventid);
         res = equality_filter_matches(match_if_key_missing, filter_map, key);
         explicit_enable_policies |= (res & ~match_if_key_missing);
@@ -405,7 +407,7 @@ statfunc u64 match_data_filters(program_data_t *p, u8 index)
     }
 
     // Suffix match
-    if (policies_cfg->data_filter_suffix_enabled) {
+    if (str_filter->suffix_enabled) {
         data_filter_lpm_key_t *key = get_string_data_filter_lpm_buf(DATA_FILTER_BUF1_IDX);
 
         if (key == NULL)
@@ -417,7 +419,7 @@ statfunc u64 match_data_filters(program_data_t *p, u8 index)
 
         key->prefix_len = len * 8;
 
-        u64 match_if_key_missing = policies_cfg->data_filter_suffix_match_if_key_missing;
+        u64 match_if_key_missing = str_filter->suffix_match_if_key_missing;
         filter_map = get_event_filter_map(&data_filter_suffix_version, version, eventid);
         res = equality_filter_matches(match_if_key_missing, filter_map, key);
         explicit_enable_policies |= (res & ~match_if_key_missing);

@@ -347,14 +347,6 @@ typedef struct policies_config {
     // bitmap with policies that have at least one filter enabled
     u64 enabled_policies;
 
-    // enabled data filters bitmask per filter
-    u64 data_filter_prefix_enabled;
-    u64 data_filter_suffix_enabled;
-    u64 data_filter_exact_enabled;
-    u64 data_filter_prefix_match_if_key_missing;
-    u64 data_filter_suffix_match_if_key_missing;
-    u64 data_filter_exact_match_if_key_missing;
-
     // global min max
     u64 uid_max;
     u64 uid_min;
@@ -371,9 +363,24 @@ typedef struct config_entry {
     policies_config_t policies_config;
 } config_entry_t;
 
+typedef struct string_filter_config {
+    u64 prefix_enabled;
+    u64 suffix_enabled;
+    u64 exact_enabled;
+    u64 prefix_match_if_key_missing;
+    u64 suffix_match_if_key_missing;
+    u64 exact_match_if_key_missing;
+} string_filter_config_t;
+
+typedef struct data_filter_config {
+    string_filter_config_t string;
+    // other types of filters
+} data_filter_config_t;
+
 typedef struct event_config {
     u64 submit_for_policies;
     u64 field_types;
+    data_filter_config_t data_filter;
 } event_config_t;
 
 enum capture_options_e

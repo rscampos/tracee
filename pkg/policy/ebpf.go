@@ -278,11 +278,18 @@ func (ps *policies) createNewFilterMapsVersion(bpfModule *bpf.Module) error {
 	return nil
 }
 
+type eventConfig struct {
+	submitForPolicies uint64
+	fieldTypes        uint64
+	dataFilter        dataFilterConfig
+}
+
 // createNewEventsMapVersion creates a new version of the events map.
 func (ps *policies) createNewEventsMapVersion(
 	bpfModule *bpf.Module,
 	rules map[events.ID]*eventFlags,
 	eventsFields map[events.ID][]bufferdecoder.ArgType,
+	eventsFilterCfg map[events.ID]stringFilterConfig,
 ) error {
 	polsVersion := ps.version()
 	innerMapName := "events_map"
@@ -303,10 +310,10 @@ func (ps *policies) createNewEventsMapVersion(
 	ps.bpfInnerMaps[innerMapName] = newInnerMap
 
 	for id, ecfg := range rules {
-		eventConfigVal := make([]byte, 16)
-
-		// bitmap of policies that require this event to be submitted
-		binary.LittleEndian.PutUint64(eventConfigVal[0:8], ecfg.policiesSubmit)
+		stringFilter, exist := eventsFilterCfg[id]
+		if !exist {
+			stringFilter = stringFilterConfig{}
+		}
 
 		// encoded event's field types
 		var fieldTypes uint64
@@ -314,9 +321,17 @@ func (ps *policies) createNewEventsMapVersion(
 		for n, fieldType := range fields {
 			fieldTypes = fieldTypes | (uint64(fieldType) << (8 * n))
 		}
-		binary.LittleEndian.PutUint64(eventConfigVal[8:16], fieldTypes)
 
-		err := newInnerMap.Update(unsafe.Pointer(&id), unsafe.Pointer(&eventConfigVal[0]))
+		eventConfig := eventConfig{
+			// bitmap of policies that require this event to be submitted
+			submitForPolicies: ecfg.policiesSubmit,
+			fieldTypes:        fieldTypes,
+			dataFilter: dataFilterConfig{
+				string: stringFilter,
+			},
+		}
+
+		err := newInnerMap.Update(unsafe.Pointer(&id), unsafe.Pointer(&eventConfig))
 		if err != nil {
 			return errfmt.WrapError(err)
 		}
@@ -662,13 +677,6 @@ func (ps *policies) updateBPF(
 	createNewMaps bool,
 	updateProcTree bool,
 ) (*PoliciesConfig, error) {
-	if createNewMaps {
-		// Create new events map version
-		if err := ps.createNewEventsMapVersion(bpfModule, rules, eventsFields); err != nil {
-			return nil, errfmt.WrapError(err)
-		}
-	}
-
 	fEqs := &filtersEqualities{
 		uidEqualities:        make(map[uint64]equality),
 		pidEqualities:        make(map[uint64]equality),
@@ -683,15 +691,22 @@ func (ps *policies) updateBPF(
 		binaryEqualities:     make(map[filters.NSBinary]equality),
 	}
 
+	fEvtCfg := make(map[events.ID]stringFilterConfig)
+
 	if err := ps.computeFilterEqualities(fEqs, cts); err != nil {
 		return nil, errfmt.WrapError(err)
 	}
 
-	if err := ps.computeDataFilterEqualities(fEqs); err != nil {
+	if err := ps.computeDataFilterEqualities(fEqs, fEvtCfg); err != nil {
 		return nil, errfmt.WrapError(err)
 	}
 
 	if createNewMaps {
+		// Create new events map version
+		if err := ps.createNewEventsMapVersion(bpfModule, rules, eventsFields, fEvtCfg); err != nil {
+			return nil, errfmt.WrapError(err)
+		}
+
 		// Create new filter maps version
 		if err := ps.createNewFilterMapsVersion(bpfModule); err != nil {
 			return nil, errfmt.WrapError(err)
@@ -835,13 +850,6 @@ type PoliciesConfig struct {
 
 	EnabledPolicies uint64
 
-	DataFilterPrefixEnabled           uint64
-	DataFilterSuffixEnabled           uint64
-	DataFilterExactEnabled            uint64
-	DataFilterPrefixMatchIfKeyMissing uint64
-	DataFilterSuffixMatchIfKeyMissing uint64
-	DataFilterExactMatchIfKeyMissing  uint64
-
 	UidMax uint64
 	UidMin uint64
 	PidMax uint64
@@ -908,15 +916,6 @@ func (ps *policies) computePoliciesConfig() *PoliciesConfig {
 		if p.Follow {
 			cfg.FollowFilterEnabled |= 1 << offset
 		}
-		if ps.kernellandPolicyMatchStates[offset].EnabledDataExactMatch() {
-			cfg.DataFilterExactEnabled |= 1 << offset
-		}
-		if ps.kernellandPolicyMatchStates[offset].EnabledDataPrefixMatch() {
-			cfg.DataFilterPrefixEnabled |= 1 << offset
-		}
-		if ps.kernellandPolicyMatchStates[offset].EnabledDataSuffixMatch() {
-			cfg.DataFilterSuffixEnabled |= 1 << offset
-		}
 		// bitmap indicating whether to match a rule if the key is missing from its filter map
 		if p.UIDFilter.MatchIfKeyMissing() {
 			cfg.UIDFilterMatchIfKeyMissing |= 1 << offset
@@ -953,15 +952,6 @@ func (ps *policies) computePoliciesConfig() *PoliciesConfig {
 		}
 		if p.BinaryFilter.MatchIfKeyMissing() {
 			cfg.BinPathFilterMatchIfKeyMissing |= 1 << offset
-		}
-		if ps.kernellandPolicyMatchStates[offset].MatchIfKeyMissingDataExactMatch() {
-			cfg.DataFilterExactMatchIfKeyMissing |= 1 << offset
-		}
-		if ps.kernellandPolicyMatchStates[offset].MatchIfKeyMissingDataPrefixMatch() {
-			cfg.DataFilterPrefixMatchIfKeyMissing |= 1 << offset
-		}
-		if ps.kernellandPolicyMatchStates[offset].MatchIfKeyMissingDataSuffixMatch() {
-			cfg.DataFilterSuffixMatchIfKeyMissing |= 1 << offset
 		}
 		cfg.EnabledPolicies |= 1 << offset
 	}
