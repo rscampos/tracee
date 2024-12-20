@@ -48,17 +48,11 @@ jobs:
     - name: Update submodules
       run: git submodule update --init --recursive
 
-    # Initializes the CodeQL tools for scanning with some packs
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
       with:
         languages: ${{ matrix.language }}
         build-mode: ${{ matrix.build-mode }}
-        # Specify custom query packs to include during analysis.
-        packs: |
-          codeql/threat-models:latest
-          codeql/${{ matrix.language }}-all:latest
-          codeql/${{ matrix.language }}-queries:latest
 
     - if: matrix.build-mode == 'manual'
       shell: bash
